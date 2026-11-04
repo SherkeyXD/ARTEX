@@ -26,6 +26,11 @@ type GoalsVars struct{ EngagementDescription, DataDir, Now string }
 // elapsed time (e.g. a timed benchmark's "last N hours" window).
 func nowStr() string { return time.Now().Format("2006-01-02 15:04:05 MST") }
 
+// nowDateStr is the server-local wall-clock date string (day-level precision) exposed
+// as the universal {{.Now}} prompt variable for workers, so system prompts stay
+// byte-identical throughout the day and maximize LLM prefix caching.
+func nowDateStr() string { return time.Now().Format("2006-01-02") }
+
 // renderSystem returns the rendered system-prompt BODY (段 [A]) for agentKey.
 // Precedence: the DB-stored template (if any) over the built-in default template
 // (def). BOTH are Go templates now — the built-in default is seeded into the DB
