@@ -19,6 +19,22 @@ const (
 	StateDigestSuperseded = "superseded"
 )
 
+// Fact node states (kind='fact').
+const (
+	StateFactConfirmed   = "confirmed"   // 正常有效的事实 (默认)
+	StateFactDismissed   = "dismissed"   // 人工忽略或驳回
+	StateFactStale       = "stale"       // 陈旧/待复核（如长期未更新或环境可能变动）
+	StateFactInvalidated = "invalidated" // 已失效/被后续探测推翻（如端口关闭、凭证失效）
+)
+
+// Finding node states (kind='finding' in exploration_nodes).
+const (
+	StateFindingConfirmed     = "confirmed"      // 已确认为真实漏洞
+	StateFindingDismissed     = "dismissed"      // 已忽略
+	StateFindingFixed         = "fixed"          // 已确认修复
+	StateFindingFalsePositive = "false_positive" // 确认为误报
+)
+
 // StateOrigin marks the task root fact (KindFact) seeded at task creation — the
 // exploration graph's origin. Every intent traces back to it, so "an intent must
 // connect to a fact" holds uniformly from the very first intent. Worker-produced

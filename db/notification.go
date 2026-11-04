@@ -483,12 +483,12 @@ func (d *DB) SetFindingStatusWithNotify(ctx context.Context, id int64, status st
 func SetFindingStatusTx(ctx context.Context, tx *sql.Tx, id int64, status string) (from string, found bool, changed bool, notified bool, err error) {
 	var (
 		vulnclass, name, severity, summary string
-		taskID                             sql.NullInt64
+		taskID, nodeID                     sql.NullInt64
 		assetIDs                           []byte
 	)
-	scanErr := tx.QueryRowContext(ctx, `SELECT vulnclass, name, severity, summary, task_id, asset_ids, status
+	scanErr := tx.QueryRowContext(ctx, `SELECT vulnclass, name, severity, summary, task_id, node_id, asset_ids, status
 FROM findings WHERE id=$1 FOR UPDATE`, id).
-		Scan(&vulnclass, &name, &severity, &summary, &taskID, &assetIDs, &from)
+		Scan(&vulnclass, &name, &severity, &summary, &taskID, &nodeID, &assetIDs, &from)
 	if scanErr == sql.ErrNoRows {
 		return "", false, false, false, nil
 	}
@@ -503,6 +503,20 @@ FROM findings WHERE id=$1 FOR UPDATE`, id).
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE findings SET status=$2 WHERE id=$1`, id, status); err != nil {
 		return from, true, false, false, err
+	}
+	if nodeID.Valid && nodeID.Int64 > 0 {
+		nodeState := "confirmed"
+		switch status {
+		case FindingFixed:
+			nodeState = StateFindingFixed
+		case FindingFalsePositive:
+			nodeState = StateFindingFalsePositive
+		case FindingIgnored:
+			nodeState = StateFindingDismissed
+		}
+		_, _ = tx.ExecContext(ctx, `UPDATE exploration_nodes
+			SET state=$1, payload=jsonb_set(payload, '{status}', to_jsonb($2::text)), content_version=content_version+1
+			WHERE id=$3 AND kind='finding'`, nodeState, status, nodeID.Int64)
 	}
 	var assets []int64
 	_ = json.Unmarshal(assetIDs, &assets)

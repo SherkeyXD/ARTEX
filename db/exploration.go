@@ -186,6 +186,9 @@ func (d *DB) Exploration(id int64) *ExplorationStore { return &ExplorationStore{
 
 func (s *ExplorationStore) ID() int64 { return s.expID }
 
+// DB returns the underlying database handle.
+func (s *ExplorationStore) DB() *DB { return s.db }
+
 // Root returns the exploration's description and goal.
 func (s *ExplorationStore) Root() (description, goal string, err error) {
 	var d sql.NullString
@@ -268,6 +271,41 @@ ON CONFLICT (exploration_id, src_id, rel, dst_id) DO NOTHING`, s.expID, from, re
 func (s *ExplorationStore) SetNodeState(id int64, state string) error {
 	_, err := s.db.Exec(`UPDATE exploration_nodes SET state=$1, blocked_reason=NULL, content_version=content_version+1 WHERE id=$2 AND exploration_id=$3`, state, id, s.expID)
 	return err
+}
+
+// UpdateFactState updates a fact node's state (confirmed/dismissed/stale/invalidated),
+// recording an optional reason into its payload. Returns an error if not found or not a fact.
+func (s *ExplorationStore) UpdateFactState(id int64, state, reason string) error {
+	switch state {
+	case StateFactConfirmed, StateFactDismissed, StateFactStale, StateFactInvalidated:
+	default:
+		return fmt.Errorf("无效的事实状态: %s (可选 confirmed / dismissed / stale / invalidated)", state)
+	}
+	var res sql.Result
+	var err error
+	if strings.TrimSpace(reason) != "" {
+		res, err = s.db.Exec(`UPDATE exploration_nodes
+			SET state=$1, payload=jsonb_set(payload, '{invalidation_reason}', to_jsonb($2::text)), content_version=content_version+1, updated_at=now()
+			WHERE id=$3 AND exploration_id=$4 AND kind='fact'`, state, reason, id, s.expID)
+	} else {
+		res, err = s.db.Exec(`UPDATE exploration_nodes
+			SET state=$1, content_version=content_version+1, updated_at=now()
+			WHERE id=$2 AND exploration_id=$3 AND kind='fact'`, state, id, s.expID)
+	}
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("事实节点 %d 不存在或不属于当前任务", id)
+	}
+	return nil
+}
+
+// ResolveFindingID accepts an identifier that could be either findings.id or exploration_nodes.id,
+// returning the corresponding findings.id.
+func (s *ExplorationStore) ResolveFindingID(id int64) (findingID int64, err error) {
+	err = s.db.QueryRow(`SELECT id FROM findings WHERE id=$1 OR node_id=$1 LIMIT 1`, id).Scan(&findingID)
+	return findingID, err
 }
 
 // UpdateGoalPayload rewrites a goal node's payload text (and optional vulnclass);
