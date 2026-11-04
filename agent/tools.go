@@ -1324,6 +1324,95 @@ func (t *ToolSet) addFinding() actool.CoreTool {
 	})
 }
 
+func (t *ToolSet) updateFindingStatus() actool.CoreTool {
+	return writeTool("update_finding_status", "更新漏洞处置状态（如确认为误报、目标已修复等）。支持通过 finding_id（独立漏洞编号）或 node_id（探索节点编号）定位漏洞。更新后同步影响任务态势和漏洞列表，防止下游 Agent 继续围绕已修复/误报的漏洞空转。", obj(map[string]any{
+		"finding_id": idp("目标漏洞编号（可传独立 finding_id 或探索节点 ID）"),
+		"status":     str("目标状态：fixed(已修复) | false_positive(误报) | confirmed(已确认) | in_progress(跟进中) | resolved(已处理) | ignored(忽略)"),
+		"reason":     str("状态变更的原因/依据（如：复测验证该接口已增加鉴权，原 PoC 请求返回 401 Unauthorized，漏洞已修复）"),
+	}, "finding_id", "status", "reason"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+		var a struct {
+			FindingID json.RawMessage `json:"finding_id"`
+			Status    string          `json:"status"`
+			Reason    string          `json:"reason"`
+		}
+		if err := json.Unmarshal(in, &a); err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		rawID := pid(a.FindingID)
+		if rawID <= 0 {
+			return actool.Errorf("finding_id 必须为有效的漏洞编号或节点 ID"), nil
+		}
+		status := strings.TrimSpace(a.Status)
+		if !db.ValidFindingStatus(status) {
+			return actool.Errorf(fmt.Sprintf("无效的漏洞状态 %q，可选值：fixed, false_positive, confirmed, in_progress, resolved, ignored", status)), nil
+		}
+		if t.ts == nil {
+			return actool.Errorf("update_finding_status 需要任务上下文"), nil
+		}
+		dbInst := t.ts.DB()
+		if dbInst == nil {
+			return actool.Errorf("数据库连接不可用"), nil
+		}
+		actualFindingID, err := t.ts.ResolveFindingID(rawID)
+		if err != nil || actualFindingID <= 0 {
+			return actool.Errorf(fmt.Sprintf("未找到编号为 %d 的漏洞记录", rawID)), nil
+		}
+		from, found, _, err := dbInst.SetFindingStatusWithNotify(ctx, actualFindingID, status)
+		if err != nil {
+			return actool.Errorf(fmt.Sprintf("更新漏洞状态失败：%v", err)), nil
+		}
+		if !found {
+			return actool.Errorf(fmt.Sprintf("漏洞 %d 不存在", actualFindingID)), nil
+		}
+		if strings.TrimSpace(a.Reason) != "" && t.ownerNode > 0 {
+			summary := fmt.Sprintf("漏洞 #%d 状态变更为 %s: %s", actualFindingID, status, a.Reason)
+			_, _ = t.recordOneFact(factItem{
+				Summary:    summary,
+				Confidence: "observed",
+				IntentID:   json.RawMessage(strconv.FormatInt(t.ownerNode, 10)),
+			}, t.ownerNode)
+		}
+		if t.notifyFinding != nil {
+			t.notifyFinding(t.ownerNode, fmt.Sprintf("漏洞 #%d 状态变更为 %s", actualFindingID, status))
+		} else if t.notify != nil {
+			t.notify()
+		}
+		return actool.Text(fmt.Sprintf("漏洞 #%d 状态已由 %s 成功更新为 %s", actualFindingID, from, status)), nil
+	})
+}
+
+func (t *ToolSet) updateFactStatus() actool.CoreTool {
+	return writeTool("update_fact_status", "更新已存在事实（fact）的状态。用于将已失效/被推翻的历史结论标记为 invalidated（已失效），或将待复核结论标记为 stale（陈旧），避免后续决策沿用错误事实。需传事实节点 id 与失效原因。", obj(map[string]any{
+		"fact_id": idp("目标事实节点的探索图 ID"),
+		"state":   str("目标状态：invalidated(已失效/被推翻) | stale(陈旧待复核) | confirmed(恢复有效) | dismissed(忽略)"),
+		"reason":  str("状态变更或失效的原因（例如：新一轮探测确认 8080 端口已被防火墙屏蔽，原开放端口事实已失效）"),
+	}, "fact_id", "state", "reason"), func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
+		var a struct {
+			FactID json.RawMessage `json:"fact_id"`
+			State  string          `json:"state"`
+			Reason string          `json:"reason"`
+		}
+		if err := json.Unmarshal(in, &a); err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		fid := pid(a.FactID)
+		if fid <= 0 {
+			return actool.Errorf("fact_id 必须为有效的事实节点 ID"), nil
+		}
+		state := strings.TrimSpace(a.State)
+		if t.ts == nil {
+			return actool.Errorf("update_fact_status 需要任务上下文"), nil
+		}
+		if err := t.ts.UpdateFactState(fid, state, a.Reason); err != nil {
+			return actool.Errorf(err.Error()), nil
+		}
+		if t.notify != nil {
+			t.notify()
+		}
+		return actool.Text(fmt.Sprintf("事实节点 #%d 状态已更新为 %s（原因：%s）", fid, state, a.Reason)), nil
+	})
+}
+
 // recordFact writes a general exploration RESULT/conclusion (not a vuln, not a
 // new asset) into the EXPLORATION graph, chained to the intent that produced it.
 // This is the home for observations and — importantly — negative results
@@ -2066,6 +2155,7 @@ func (t *ToolSet) PlannerTools() []actool.CoreTool {
 		t.killWorkTool(), t.steerWorkTool(),
 		// report_finding：规划态势研判时若自身已确证漏洞，可直接登记（与 worker 同工具）。
 		t.addFinding(),
+		t.updateFindingStatus(), t.updateFactStatus(),
 		// list_companies：查看企业列表 + scope + 资产数（拿 company_id / 理解归属范围）。
 		t.listCompanies(),
 		// list_assets：规划时按 DSL 检索全资产库（配合 list_untested_assets 的"范围内未测"视角，
