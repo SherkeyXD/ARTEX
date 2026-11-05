@@ -32,7 +32,6 @@ import type {
   DeleteTaskOptions,
   DeleteTaskResult,
   Edge,
-  EvidenceBodyPreview,
   ExplorationNodePage,
   ExplorationNodeQuery,
   Finding,

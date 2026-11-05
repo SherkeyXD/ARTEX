@@ -495,7 +495,7 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
         .then((r) => {
           if (!alive) return;
           // 直播位每轮都刷新;其它位置只渲染第一次,之后轮询仅更新未读计数。
-          const sig = `${r.total}|${r.items.map((n) => `${n.id}:${n.status || ""}:${n.updated_at || ""}`).join(";")}`;
+          const sig = `${r.total}|${r.items.map((n) => `${n.id}:${n.state || ""}:${n.ts || ""}`).join(";")}`;
           if (atLive || !rendered) {
             rendered = true;
             if (sig !== lastSigRef.current) {

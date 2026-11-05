@@ -222,7 +222,8 @@ export default function DashboardPage() {
         skillList.length,
         toolList.length,
         profileList.length,
-        usage.length,
+        usage?.daily?.length,
+        usage?.by_profile?.length,
       ]);
       if (nextSig === slowSigRef.current) return;
       slowSigRef.current = nextSig;
