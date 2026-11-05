@@ -140,3 +140,26 @@ func TestRenderGraphOverviewFormatsDistilledOutput(t *testing.T) {
 		t.Fatalf("rendered string missing goal content: %s", rendered)
 	}
 }
+
+func TestRenderTriggersFindingStatusChange(t *testing.T) {
+	evs := []TriggerEvent{
+		{
+			Kind:     "finding",
+			IntentID: 15,
+			Detail:   "漏洞 #42 状态变更为 fixed: 验证补丁已生效",
+		},
+		{
+			Kind:     "finding",
+			IntentID: 16,
+			Detail:   "SQL注入漏洞在 /api/login 处被确认",
+		},
+	}
+
+	out := renderTriggers(nil, evs)
+	if !strings.Contains(out, "更新了状态：漏洞 #42 状态变更为 fixed") {
+		t.Fatalf("status change event not rendered properly: %s", out)
+	}
+	if !strings.Contains(out, "报告了一个 finding：SQL注入漏洞") {
+		t.Fatalf("normal finding report event not rendered properly: %s", out)
+	}
+}

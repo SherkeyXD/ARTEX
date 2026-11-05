@@ -171,7 +171,7 @@ type TriggerEvent struct {
 // what was found. Empty for time/heartbeat wakes. Reads the store (best-effort;
 // a blank field never blocks the round).
 func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
-	if len(evs) == 0 || ts == nil {
+	if len(evs) == 0 {
 		return ""
 	}
 	var b strings.Builder
@@ -195,7 +195,11 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 		case "goal_edited":
 			b.WriteString(fmt.Sprintf("\n- 人修改了目标，由「%s」变为「%s」—— 请据新目标调整探索方向（原方向若已不适用请停派）。", ev.OldGoal, ev.NewGoal))
 		case "finding":
-			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 报告了一个 finding：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail))
+			if strings.Contains(ev.Detail, "状态变更为") {
+				b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 更新了状态：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail))
+			} else {
+				b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 报告了一个 finding：%s", ev.IntentID, intentSummary(ts, ev.IntentID), ev.Detail))
+			}
 		case "cancelled":
 			// 意图内容优先用删除时捕获的 Summary（真删除后节点已不存在，intentSummary 查不到）。
 			sm := ev.Summary
@@ -248,6 +252,9 @@ func factSummary(ts *db.ExplorationStore, id int64) string {
 
 // intentSummary reads an intent node's one-line summary (best-effort, "?" on miss).
 func intentSummary(ts *db.ExplorationStore, id int64) string {
+	if ts == nil {
+		return "?"
+	}
 	n, err := ts.GetNode(id)
 	if err != nil || n == nil {
 		return "?"
@@ -264,6 +271,9 @@ func intentSummary(ts *db.ExplorationStore, id int64) string {
 // workerOutput returns the finished worker's conclusion for an intent — the last
 // 'result' (else 'text') activity's full detail, truncated. Same source get_worker_output uses.
 func workerOutput(ts *db.ExplorationStore, id int64) string {
+	if ts == nil {
+		return "(无输出)"
+	}
 	acts, _, err := ts.ActivityList(&id, 0, 1000)
 	if err != nil {
 		return "(取输出失败)"

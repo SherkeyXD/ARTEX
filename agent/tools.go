@@ -444,12 +444,20 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 	// via node_detail(id).
 	vulnNodes, _ := t.ts.ListByKind(db.KindFinding, 1000)
 	factNodes, _ := t.ts.ListByKind(db.KindFact, 1000) // newest first
-	out["findings_total"] = len(vulnNodes)             // 确认漏洞总数（目标判定看它）；明细见 finding_list（最新一窗）
+	// findings_total 只统计当前确认且存活的有效漏洞（排除 fixed/false_positive/dismissed），
+	// 避免已修复或误报的漏洞误导规划器提前判定目标达成。
+	activeFindingsCount := 0
+	for _, n := range vulnNodes {
+		if n.State == db.StateFindingConfirmed {
+			activeFindingsCount++
+		}
+	}
+	out["findings_total"] = activeFindingsCount
 	out["facts"] = len(factNodes)                      // 探索事实/结论数（含否定结论）
 	// findings 是任务里最高价值的产物 → 概览带最新一窗（≤10 条，vulnNodes 已按 id 降序即最新在前），
 	// 让 planner 每轮判目标时一眼看到最近确认的漏洞；全量/更早的用 list_findings 取。
-	// 每条只留 {id, summary, from_intent?}：from_intent 是产生本漏洞的意图。
-	// evidence/assets/vulnclass/severity/state 等仍可用 list_findings / node_detail(id) 取。
+	// 每条带 {id, state, summary, age?, from_intent?}：状态一目了然，已处置漏洞也不会导致认知断层。
+	// evidence/assets/vulnclass/severity 等仍可用 list_findings / node_detail(id) 取。
 	const findingListCap = 10
 	findingList := make([]map[string]any, 0, findingListCap)
 	for _, n := range vulnNodes {
@@ -458,7 +466,10 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		}
 		var fp map[string]any
 		_ = json.Unmarshal(n.Payload, &fp)
-		m := map[string]any{"id": n.ID, "summary": fp["summary"]}
+		m := map[string]any{"id": n.ID, "state": n.State, "summary": fp["summary"]}
+		if age := formatAge(n.CreatedAt); age != "" {
+			m["age"] = age
+		}
 		if from := factFrom[n.ID]; from > 0 {
 			m["from_intent"] = from // 本漏洞由哪个意图产生
 		}
@@ -477,8 +488,8 @@ func (t *ToolSet) graphOverviewData() map[string]any {
 		if hidden(n.ID) {
 			continue // 已折进 digest 且仍冷 —— 见 cold_digests
 		}
-		if n.State == db.StateFactInvalidated {
-			continue // 已失效的事实不进概览，避免规划器继续基于失效事实派生意图
+		if n.State == db.StateFactInvalidated || n.State == db.StateFactDismissed {
+			continue // 已失效或被忽略的事实不进概览，避免规划器继续基于失效事实派生意图
 		}
 		m := compactNode(n)
 		if from := factFrom[n.ID]; from > 0 {
@@ -1372,8 +1383,12 @@ func (t *ToolSet) updateFindingStatus() actool.CoreTool {
 				IntentID:   json.RawMessage(strconv.FormatInt(t.ownerNode, 10)),
 			}, t.ownerNode)
 		}
+		notice := fmt.Sprintf("漏洞 #%d 状态变更为 %s", actualFindingID, status)
+		if strings.TrimSpace(a.Reason) != "" {
+			notice = fmt.Sprintf("漏洞 #%d 状态变更为 %s: %s", actualFindingID, status, a.Reason)
+		}
 		if t.notifyFinding != nil {
-			t.notifyFinding(t.ownerNode, fmt.Sprintf("漏洞 #%d 状态变更为 %s", actualFindingID, status))
+			t.notifyFinding(t.ownerNode, notice)
 		} else if t.notify != nil {
 			t.notify()
 		}
@@ -1406,7 +1421,13 @@ func (t *ToolSet) updateFactStatus() actool.CoreTool {
 		if err := t.ts.UpdateFactState(fid, state, a.Reason); err != nil {
 			return actool.Errorf(err.Error()), nil
 		}
-		if t.notify != nil {
+		notice := fmt.Sprintf("事实 #%d 状态变更为 %s", fid, state)
+		if strings.TrimSpace(a.Reason) != "" {
+			notice = fmt.Sprintf("事实 #%d 状态变更为 %s: %s", fid, state, a.Reason)
+		}
+		if t.notifyFinding != nil && t.ownerNode > 0 {
+			t.notifyFinding(t.ownerNode, notice)
+		} else if t.notify != nil {
 			t.notify()
 		}
 		return actool.Text(fmt.Sprintf("事实节点 #%d 状态已更新为 %s（原因：%s）", fid, state, a.Reason)), nil
