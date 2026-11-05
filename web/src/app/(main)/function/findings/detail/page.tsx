@@ -8,6 +8,7 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeftIcon, ArrowUpRightIcon, ShieldAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { BackButton } from "@/components/back-button";
 import { CopyButton } from "@/components/copy-button";
 import { FindingRetestPanel } from "@/components/finding-retest-panel";
 import { Markdown } from "@/components/markdown";
@@ -57,9 +58,18 @@ function FindingDetailInner() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
   const contextTaskId = searchParams.get("context_task") ?? "";
+  const fromTab = searchParams.get("from_tab") ?? "findings";
   const [finding, setFinding] = React.useState<Finding | null>(null);
   const [loaded, setLoaded] = React.useState(false);
   const [tab, setTab] = React.useState("overview");
+
+  const fallbackHref = React.useMemo(() => {
+    const taskId = contextTaskId || (finding?.inherited ? finding.source_task_id : finding?.task_id);
+    if (taskId) {
+      return `/function/tasks/detail?id=${encodeURIComponent(taskId)}&tab=${encodeURIComponent(fromTab)}`;
+    }
+    return "/function/findings";
+  }, [contextTaskId, finding, fromTab]);
 
   const load = React.useCallback(() => {
     if (!id) {
@@ -115,11 +125,9 @@ function FindingDetailInner() {
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
         <p className="text-muted-foreground">{loaded ? `未找到发现 ${id}` : "加载中…"}</p>
         {loaded && (
-          <Button asChild variant="outline">
-            <Link href="/function/findings">
-              <ArrowLeftIcon /> 返回发现列表
-            </Link>
-          </Button>
+          <BackButton fallback={fallbackHref} variant="outline">
+            <ArrowLeftIcon /> {fallbackHref.startsWith("/function/tasks/detail") ? "返回任务" : "返回发现列表"}
+          </BackButton>
         )}
       </div>
     );
@@ -133,11 +141,12 @@ function FindingDetailInner() {
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex flex-wrap items-center gap-2">
           <SidebarTrigger className="-ml-1" />
-          <Button asChild variant="ghost" size="icon" className="size-7">
-            <Link href="/function/findings">
-              <ArrowLeftIcon />
-            </Link>
-          </Button>
+          <BackButton
+            fallback={fallbackHref}
+            size="icon"
+            className="size-7"
+            title={fallbackHref.startsWith("/function/tasks/detail") ? "返回任务" : "返回发现列表"}
+          />
           <ShieldAlertIcon className="size-4 text-muted-foreground" />
           <h1 className="max-w-md truncate text-sm font-semibold" title={title}>
             {title}

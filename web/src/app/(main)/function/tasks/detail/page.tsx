@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArchiveIcon, ArrowLeftIcon, BrainIcon, CheckIcon, CircleAlertIcon, PauseIcon, PlayIcon } from "lucide-react";
 import { toast } from "sonner";
 
+import { BackButton } from "@/components/back-button";
 import { StatusBadge } from "@/components/status-badge";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -209,10 +210,29 @@ function TaskDetailInner() {
   const [task, setTask] = React.useState<Task | null>(null);
   const [paused, setPaused] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
-  const [tab, setTab] = React.useState("sessions");
+  const initialTab = searchParams.get("tab");
+  const validInitialTab = initialTab && TABS.some((t) => t.value === initialTab) ? initialTab : "sessions";
+  const [tab, setTab] = React.useState(validInitialTab);
   const [interceptPendingCount, setInterceptPendingCount] = React.useState(0);
   const [profiles, setProfiles] = React.useState<LLMProfile[]>([]);
   const [archiving, setArchiving] = React.useState(false);
+
+  React.useEffect(() => {
+    const urlTab = searchParams.get("tab");
+    if (urlTab && TABS.some((t) => t.value === urlTab) && urlTab !== tab) {
+      setTab(urlTab);
+    }
+  }, [searchParams, tab]);
+
+  const handleTabChange = React.useCallback(
+    (nextTab: string) => {
+      setTab(nextTab);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("tab", nextTab);
+      router.replace(`/function/tasks/detail?${params.toString()}`, { scroll: false });
+    },
+    [router, searchParams],
+  );
 
   React.useEffect(() => {
     api
@@ -305,11 +325,9 @@ function TaskDetailInner() {
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-10 text-center">
         <p className="text-muted-foreground">{loaded ? `任务 ${id} 已被删除、归档或不存在` : "加载中…"}</p>
         {loaded && (
-          <Button asChild variant="outline">
-            <Link href="/function/tasks">
-              <ArrowLeftIcon /> 返回任务列表
-            </Link>
-          </Button>
+          <BackButton fallback="/function/tasks" variant="outline">
+            <ArrowLeftIcon /> 返回任务列表
+          </BackButton>
         )}
       </div>
     );
@@ -348,16 +366,12 @@ function TaskDetailInner() {
   );
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="flex flex-1 flex-col gap-0">
+    <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-1 flex-col gap-0">
       {/* Top fixed area */}
       <header className="sticky top-0 z-10 flex flex-col gap-2 border-b bg-background/95 px-4 py-2.5 backdrop-blur lg:px-6">
         <div className="flex items-center gap-2">
           <SidebarTrigger className="-ml-1" />
-          <Button asChild variant="ghost" size="icon" className="size-7">
-            <Link href="/function/tasks">
-              <ArrowLeftIcon />
-            </Link>
-          </Button>
+          <BackButton fallback="/function/tasks" size="icon" className="size-7" title="返回任务列表" />
           <h1 className="min-w-0 flex-1 truncate text-sm font-semibold" title={task.name || task.description}>
             {task.name || task.description}
           </h1>
