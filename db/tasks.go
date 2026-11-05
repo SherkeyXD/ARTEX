@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 )
 
@@ -55,10 +54,9 @@ type Task struct {
 // TaskDeleteResult reports optional related-data cleanup performed in the same
 // transaction as the task/exploration delete.
 type TaskDeleteResult struct {
-	AssetsDeleted     int64
-	AssetsDetached    int64
-	FindingsDeleted   int64
-	LLMRecordsDeleted int64
+	AssetsDeleted   int64
+	AssetsDetached  int64
+	FindingsDeleted int64
 }
 
 // TaskDeletePreparation is produced inside the PostgreSQL deletion transaction
@@ -531,11 +529,9 @@ func (d *DB) DeleteTask(id int64) error {
 // DeleteTaskCascade hard-deletes a task and its exploration subgraph
 // (nodes/edges/activity via ON DELETE CASCADE). Optional standalone findings and
 // assets owned only by this task are deleted in the same transaction; shared
-// assets are retained and only have this task id detached. deleteLLMRecords is
-// optional to preserve callers of the original two-option API.
-func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, deleteLLMRecords ...bool) (TaskDeleteResult, error) {
-	deleteRecords := len(deleteLLMRecords) > 0 && deleteLLMRecords[0]
-	return d.DeleteTaskCascadePrepared(id, deleteAssets, deleteFindings, deleteRecords, nil)
+// assets are retained and only have this task id detached.
+func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool) (TaskDeleteResult, error) {
+	return d.DeleteTaskCascadePrepared(id, deleteAssets, deleteFindings, nil)
 }
 
 // DeleteTaskCascadePrepared coordinates reversible external deletion with the
@@ -549,7 +545,7 @@ func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool, dele
 // external work that its callback staged successfully.
 func (d *DB) DeleteTaskCascadePrepared(
 	id int64,
-	deleteAssets, deleteFindings, deleteLLMRecords bool,
+	deleteAssets, deleteFindings bool,
 	prepare func(TaskDeletePreparation) error,
 ) (TaskDeleteResult, error) {
 	var result TaskDeleteResult
@@ -634,13 +630,6 @@ DELETE FROM assets a USING deletable d WHERE a.id=d.id`, id, expID)
 			return result, err
 		}
 		result.FindingsDeleted, _ = res.RowsAffected()
-	}
-	if deleteLLMRecords {
-		res, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(id, 10))
-		if err != nil {
-			return result, err
-		}
-		result.LLMRecordsDeleted, _ = res.RowsAffected()
 	}
 	// llm_usage (the token metering ledger) is intentionally NOT deleted with the
 	// task — it is kept as historical accounting even after the task is gone.

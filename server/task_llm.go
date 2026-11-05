@@ -7,16 +7,13 @@ import (
 	"fmt"
 	"iter"
 	"log"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 type taskAgentBundle struct {
@@ -220,7 +217,6 @@ func (r *taskLLMRuntime) streamHooks() taskLLMStreamHooks {
 }
 
 func (r *taskLLMRuntime) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
-	ctx = llmrec.WithTaskID(ctx, r.taskID)
 	return streamTaskLLM(ctx, r.taskID, req, r.streamHooks())
 }
 
@@ -230,7 +226,6 @@ func (r *taskLLMRuntime) Stream(ctx context.Context, req llm.CompletionRequest) 
 // duplicated model output or tool execution (the "committed" bookkeeping the
 // streaming path needs is unnecessary here).
 func (r *taskLLMRuntime) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
-	ctx = llmrec.WithTaskID(ctx, r.taskID)
 	return completeTaskLLM(ctx, r.taskID, req, r.streamHooks())
 }
 
@@ -559,24 +554,21 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	plannerRuntime := &taskLLMRuntime{s: s, taskID: t.ID, agentKey: "planner"}
 	workerRuntime := &taskLLMRuntime{s: s, taskID: t.ID, agentKey: "worker"}
 	mainRuntime := &taskLLMRuntime{s: s, taskID: t.ID, agentKey: "mainagent"}
-	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
 	window := workerRuntime.CompactionWindow()
-	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, tx, window, s.agentMaxTurns("worker"))
+	wk := agent.NewWorker(workerRuntime, "task-router", s.m.dir, window, s.agentMaxTurns("worker"))
 	wk.SetFindingRecorder(s.evidenceStore())
 	wk.SetCompactionWindowResolver(workerRuntime.CompactionWindow)
 	wk.SetNonStreaming(workerRuntime.nonStreaming) // 按任务当前激活 profile 的流式开关(每轮读)
 	wk.SetMaxTokens(workerRuntime.maxTokens)       // 同上,输出上限也跟随当前激活 profile
-	wk.SetNoaEnabled(s.m.NoaCompactionEnabled)     // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	wk.SetRunTimeout(time.Duration(s.agentRunSeconds("worker")) * time.Second)
 	wk.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	wk.SetWebSearch(s.webSearchFor("worker"))
 	wk.SetConstraintInject(s.constraintInjectWorker) // 操作约束注入 worker(可配置,默认开)
-	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, tx, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
+	pl := agent.NewPlanner(plannerRuntime, "task-router", s.m.dir, plannerRuntime.CompactionWindow(), s.agentMaxTurns("planner"))
 	pl.SetFindingRecorder(s.evidenceStore())
 	pl.SetCompactionWindowResolver(plannerRuntime.CompactionWindow)
 	pl.SetNonStreaming(plannerRuntime.nonStreaming)
 	pl.SetMaxTokens(plannerRuntime.maxTokens)
-	pl.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	pl.SetKillWork(s.engine.KillWork)
 	pl.SetSteerWork(s.engine.SteerWork)
 	pl.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
@@ -586,12 +578,11 @@ func (s *Server) agentsForTask(t *Task) *taskAgentBundle {
 	// (agentsForTask),Compactor 必须接在这里。走任务路由的 planner provider(§4:与 agent
 	// 同模型,随任务 LLM 链解析),压缩用 Complete 一次性生成 body。
 	pl.SetCompactor(agent.NewCompactor(plannerRuntime, "task-router"))
-	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, tx, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
+	main := agent.NewMainAgent(mainRuntime, "task-router", s.m.dir, mainRuntime.CompactionWindow(), s.agentMaxTurns("mainagent"))
 	main.SetFindingRecorder(s.evidenceStore())
 	main.SetCompactionWindowResolver(mainRuntime.CompactionWindow)
 	main.SetNonStreaming(mainRuntime.nonStreaming)
 	main.SetMaxTokens(mainRuntime.maxTokens)
-	main.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(平台级开关,每 run 读)
 	main.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	main.SetWebSearch(s.webSearchFor("mainagent"))
 	main.SetSteerWork(s.engine.SteerWork) // steer_work：人对运行中 work 实时纠偏

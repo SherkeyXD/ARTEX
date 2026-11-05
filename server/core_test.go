@@ -130,18 +130,11 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.pg.EnsureLLMRecordsTable(); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.pg.InsertLLMRecord(&db.LLMRecord{TaskID: id, SessionID: "delete-test", Status: "ok", RequestBody: "secret"}); err != nil {
-		t.Fatal(err)
-	}
 	// A non-canonical path still resolves to the one canonical task key for the
 	// barrier, workspace, in-memory registry and DB delete.
 	code, out = doRetry("DELETE", "/api/tasks/000"+id, map[string]bool{
-		"delete_files":       true,
-		"delete_findings":    true,
-		"delete_llm_records": true,
+		"delete_files":    true,
+		"delete_findings": true,
 	})
 	if code != 200 {
 		t.Fatalf("delete task: %d", code)
@@ -151,9 +144,6 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 	}
 	if deleted, _ := out["findings_deleted"].(float64); deleted != 1 {
 		t.Fatalf("expected one deleted finding, got %v", out)
-	}
-	if deleted, _ := out["llm_records_deleted"].(float64); deleted != 1 {
-		t.Fatalf("expected one deleted LLM record, got %v", out)
 	}
 	if _, err := os.Stat(taskDir); !os.IsNotExist(err) {
 		t.Fatalf("task directory should be deleted, stat err=%v", err)
@@ -168,10 +158,6 @@ func TestCoreTaskLifecyclePG(t *testing.T) {
 	}
 	if finding, err := m.pg.GetFinding(findingID); err != nil || finding != nil {
 		t.Fatalf("finding should be deleted, got finding=%+v err=%v", finding, err)
-	}
-	var llmRecords int
-	if err := m.pg.QueryRow(`SELECT count(*) FROM llm_records WHERE task_id=$1`, id).Scan(&llmRecords); err != nil || llmRecords != 0 {
-		t.Fatalf("task LLM records should be deleted, count=%d err=%v", llmRecords, err)
 	}
 	var n int
 	m.pg.QueryRow(`SELECT count(*) FROM exploration_nodes WHERE exploration_id=$1`, expID).Scan(&n)

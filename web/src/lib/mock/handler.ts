@@ -44,7 +44,6 @@ const mockInterceptPending = structuredClone(D.interceptPending);
 const mockInterceptDetails = structuredClone(D.interceptDetails);
 const mockTasks = structuredClone(D.tasks);
 const mockFindings = structuredClone(D.findings);
-const mockLLMRecords = structuredClone(D.llmRecords);
 const mockTaskTemplates = structuredClone(D.taskTemplates);
 const mockTaskCategories = structuredClone(D.taskCategories);
 const mockConversations = structuredClone(D.conversations);
@@ -285,7 +284,6 @@ function mockArchiveTask(taskID: string): MockTaskArchive {
     if (source) assetSources.push([assetID, structuredClone(source)]);
   }
   const findings = mockFindings.filter((finding) => finding.task_id === taskID);
-  const llmRecords = mockLLMRecords.filter((record) => record.task_id === taskID);
   const tokens = task.tokens ?? { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
   const now = new Date().toISOString();
   const archive: MockTaskArchive = {
@@ -308,11 +306,10 @@ function mockArchiveTask(taskID: string): MockTaskArchive {
     data_counts: {
       assets: assetIDs.length,
       findings: findings.length,
-      llm_records: llmRecords.length,
     },
     aggregate_stats: {
       tokens: {
-        calls: llmRecords.length,
+        calls: 0,
         input_tokens: tokens.input_tokens,
         output_tokens: tokens.output_tokens,
         cache_read_tokens: tokens.cache_read_tokens,
@@ -1392,15 +1389,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       }
     }
 
-    let llmRecordsDeleted = 0;
-    if (b.delete_llm_records) {
-      for (let i = mockLLMRecords.length - 1; i >= 0; i--) {
-        if (mockLLMRecords[i].task_id !== id) continue;
-        mockLLMRecords.splice(i, 1);
-        llmRecordsDeleted++;
-      }
-    }
-
     if (mockActiveTask === id) {
       const nextActive = mockTasks[0]?.id ?? "";
       mockActiveTask = nextActive;
@@ -1413,7 +1401,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       traffic_deleted: b.delete_traffic ? 1 : 0,
       files_deleted: Boolean(b.delete_files),
       findings_deleted: findingsDeleted,
-      llm_records_deleted: llmRecordsDeleted,
     };
   }
   if (seg[0] === "tasks" && seg[2] === "llm" && m === "PUT") {
@@ -2241,18 +2228,6 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
   }
 
   // ── LLM ──
-  if (path === "/llm/records" && m === "GET") return { records: mockLLMRecords, total: mockLLMRecords.length };
-  if (path === "/llm/records" && m === "DELETE") return { deleted: 0 };
-  if (path === "/llm/records/tasks") {
-    const counts = new Map<string, number>();
-    for (const record of mockLLMRecords) {
-      if (record.task_id) counts.set(record.task_id, (counts.get(record.task_id) ?? 0) + 1);
-    }
-    return { tasks: [...counts].map(([task_id, count]) => ({ task_id, count })) };
-  }
-  if (seg[0] === "llm" && seg[1] === "records" && seg.length === 3 && m === "GET") {
-    return D.llmRecordDetail(Number(seg[2]), mockLLMRecords);
-  }
   if (path === "/llm" && m === "GET") return D.llmConfig;
   if (path === "/llm" && m === "POST") return { ok: true };
   if (path === "/llm/test")

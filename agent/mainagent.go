@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
@@ -10,7 +9,6 @@ import (
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // MainAgent is the thin human-interface orchestrator (docs §4.2 / §7). The human
@@ -21,7 +19,6 @@ type MainAgent struct {
 	findingRecorder FindingRecorder
 	prov            llm.Provider
 	model           string
-	tx              *transcript.Store                      // raw LLM conversation persistence (nil = off)
 	window          int                                    // context window in tokens (for compaction)
 	windowFn        func() int                             // optional dynamic task-chain minimum
 	maxTurns        int                                    // max agent turns per run (0 = unlimited)
@@ -31,14 +28,8 @@ type MainAgent struct {
 	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
 	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 }
-
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (m *MainAgent) SetNoaEnabled(fn func() bool) { m.noaEnabledFn = fn }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -57,8 +48,8 @@ func (m *MainAgent) maxTokens() int {
 	return m.maxTokensFn()
 }
 
-func NewMainAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *MainAgent {
-	return &MainAgent{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns}
+func NewMainAgent(prov llm.Provider, model, workDir string, window, maxTurns int) *MainAgent {
+	return &MainAgent{prov: prov, model: model, workDir: workDir, window: window, maxTurns: maxTurns}
 }
 
 func (m *MainAgent) SetCompactionWindowResolver(fn func() int) { m.windowFn = fn }
@@ -164,34 +155,9 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		NonStreaming: m.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    m.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
-	if m.tx != nil { // persist raw human↔AI conversation; one accumulating file per segment
-		opts.Transcript = m.tx
-		// Segment 0 keeps the legacy "exp%d-main" name so existing transcripts still
-		// load; each new session (seg>=1) gets its own file for a clean context.
-		opts.SessionID = fmt.Sprintf("exp%d-main", ts.ID())
-		if mainSeg > 0 {
-			opts.SessionID = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
-		}
-	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	// session id 与 transcript 同规则(分段感知),使归档与恢复对齐。
-	noaSession := fmt.Sprintf("exp%d-main", ts.ID())
-	if mainSeg > 0 {
-		noaSession = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
-	}
-	enableNoa(&opts, m.noaEnabledFn, m.workDir, noaSession, noaWarn(noaSession))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()
-	// reload the prior conversation from the transcript so the agent has context
-	// across turns (each Chat is a fresh session; without this it can't see earlier
-	// messages). First turn: no file yet → Resume loads nothing and proceeds.
-	if m.tx != nil {
-		_ = s.Resume(opts.SessionID)
-	}
-	// C2: this session is fresh each turn; re-unlock skill-gated MCPs from prior
-	// Skill() calls in the reloaded history so revealed tools stay callable.
-	seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
 	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
 		if emit != nil {
 			r.Worker = "mainagent"

@@ -89,8 +89,7 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 		// 压缩是裸 provider 调用（compress 里直接 prov.Complete），不经过 agentcore
 		// 的会话循环，所以 ctx 上没有 session id；按 session-id 头做提示缓存/粘性
 		// 路由的网关（opencode zen 缺 x-opencode-session 直接 400）就收不到该头。
-		// 这里补一个按探索稳定的 id：同一探索的所有压缩请求共享它，既能带上头，
-		// 也让 llmrec 能把这次调用的 token 归因回该探索（此前记不到）。
+		// 这里补一个按探索稳定的 id：同一探索的所有压缩请求共享它，能带上会话头。
 		bg = transcript.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", ts.ID()))
 		if needMajor {
 			c.major(bg, ts)

@@ -56,11 +56,8 @@ import type {
   JudgeUsage,
   LLMPoolStatus,
   LLMProfile,
-  LLMRecordDetail,
-  LLMRecordItem,
   LLMRetryOverride,
   LLMRetryPolicy,
-  LLMTask,
   MCPServer,
   MCPTool,
   MissingSkill,
@@ -1285,19 +1282,6 @@ export const api = {
     return get<{ stats: ToolStat[] }>(`/commands/stats?${sp}`);
   },
 
-  // ---- LLM records ----
-  llmRecords: (params?: { model?: string; session?: string; task?: string; page?: number; size?: number }) => {
-    const sp = new URLSearchParams();
-    if (params?.model) sp.set("model", params.model);
-    if (params?.session) sp.set("session", params.session);
-    if (params?.task) sp.set("task", params.task);
-    if (params?.page !== undefined) sp.set("page", String(params.page));
-    sp.set("size", String(params?.size ?? 50));
-    return get<{ records: LLMRecordItem[]; total: number }>(`/llm/records?${sp}`);
-  },
-  llmRecordDetail: (id: number) => get<LLMRecordDetail>(`/llm/records/${id}`),
-  llmTasks: () => get<{ tasks: LLMTask[] }>(`/llm/records/tasks`),
-  llmRecordsDeleteTask: (task: string) => del<{ deleted: number }>(`/llm/records?task=${encodeURIComponent(task)}`),
   // 按模型聚合本任务的 token 用量（来自常开的 llm_usage 计量账本，逐次调用精确，
   // per-agent 绑定 / 轮询 / 中断消耗都覆盖）。
   tokensByModel: (task: string) =>

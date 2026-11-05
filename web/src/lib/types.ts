@@ -65,7 +65,6 @@ export interface DeleteTaskOptions {
   delete_traffic: boolean;
   delete_files: boolean;
   delete_findings: boolean;
-  delete_llm_records: boolean;
 }
 
 export interface DeleteTaskResult {
@@ -75,7 +74,6 @@ export interface DeleteTaskResult {
   traffic_deleted: number;
   files_deleted: boolean;
   findings_deleted: number;
-  llm_records_deleted: number;
   cleanup_warning?: string;
 }
 
@@ -911,7 +909,6 @@ export interface TrafficHost {
 export interface Settings {
   traffic_capture: boolean;
   agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
-  llm_record: boolean; // LLM 录制开关（默认关）；关闭时不记录任何 LLM 调用
   // Web search. brave_key_set / tavily_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.
   web_search_enabled: boolean;
@@ -939,10 +936,6 @@ export interface Settings {
   // 操作约束注入范围(默认都开):把任务的 allow/deny 约束拼进对应 agent 的系统提示。
   constraints_inject_planner?: boolean;
   constraints_inject_worker?: boolean;
-  // 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent(planner/
-  // worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction;每 run 读一次,对
-  // 之后启动的 run 生效。
-  noa_compaction?: boolean;
   // ---- 漏洞 IM 推送（渠道本身是独立资源，见 /api/notify/*，这里只有三项全局配置）----
   notify_enabled?: boolean; // 推送总开关，默认开；用于维护期一键止血
   notify_public_base_url?: string; // 漏洞详情回链的外部访问地址；空=消息不带回链
@@ -1406,40 +1399,6 @@ export interface ToolStat {
   tool: string;
   total: number;
   errors: number;
-}
-
-// ---- LLM recording ----
-export interface LLMRecordItem {
-  id: number;
-  ts: string;
-  model: string;
-  profile_name: string;
-  session_id: string;
-  task_id: string;
-  worker: string;
-  latency_ms: number;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read: number;
-  cache_write: number;
-  status: string;
-  error?: string;
-}
-
-export interface LLMRecordDetail extends LLMRecordItem {
-  request_body: string;
-  response_body: string;
-  // provider 实际收发的 HTTP 原文：请求为 buildBody() 发出的完整 body（含工具
-  // schema），响应为原始 SSE 帧。上面的 request_body/response_body 是归一化视图，
-  // 丢弃了工具 schema 与 tool_use 块。旧记录为空。
-  raw_request?: string;
-  raw_response?: string;
-}
-
-// One distinct task with its LLM-record count (task picker on the records page).
-export interface LLMTask {
-  task_id: string;
-  count: number;
 }
 
 // The exact JSON sent to the review model, retained for all model verdicts.

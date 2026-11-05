@@ -17,7 +17,6 @@ import (
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -59,7 +58,6 @@ type Worker struct {
 	proxyAddr       string
 	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
 	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
-	tx              *transcript.Store // raw LLM conversation persistence (nil = off)
 	window          int               // context window in tokens (for compaction)
 	windowFn        func() int        // optional dynamic task-chain minimum
 	maxTurns        int               // max agent turns per run (0 = unlimited)
@@ -78,10 +76,6 @@ type Worker struct {
 	// path. Read per run so a profile/task toggle takes effect without rebuilding
 	// the agent. nil = streaming (default).
 	nonStreamingFn func() bool
-	// noaEnabledFn resolves whether this run uses the experimental noa context-
-	// compression mechanism. Read per run, like nonStreaming. nil = off (built-in
-	// compaction).
-	noaEnabledFn func() bool
 	// maxTokensFn resolves the per-reply output cap in tokens, on the same
 	// per-run basis. nil or 0 = send no cap and let the endpoint decide.
 	maxTokensFn func() int
@@ -118,11 +112,6 @@ func (w *Worker) SetNonStreaming(fn func() bool) { w.nonStreamingFn = fn }
 
 func (w *Worker) nonStreaming() bool { return w.nonStreamingFn != nil && w.nonStreamingFn() }
 
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (w *Worker) SetNoaEnabled(fn func() bool) { w.noaEnabledFn = fn }
-
 // SetMaxTokens wires a resolver for the per-reply output cap. nil/unset or 0 =
 // send no cap and let the endpoint decide. Read per run, like nonStreaming.
 func (w *Worker) SetMaxTokens(fn func() int) { w.maxTokensFn = fn }
@@ -153,8 +142,8 @@ func (w *Worker) SetRunTimeout(run time.Duration) {
 // plain-text one-liner (which becomes this run's displayed result).
 const settleWrapUpPrompt = "你即将因预算耗尽被终止。不要再运行任何命令/探测。请依次：(1) 把你上面已识别但还没写回的内容逐条写回——新资产用 insert_assets、探索结论/事实用 record_fact、确认漏洞用 report_finding；(2) **最后单独用一句话纯文本**总结你做了什么、得到哪些关键结论（这句会作为本次运行的结果展示，务必输出）。"
 
-func NewWorker(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int, extra ...actool.CoreTool) *Worker {
-	return &Worker{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, extraTools: extra}
+func NewWorker(prov llm.Provider, model, workDir string, window, maxTurns int, extra ...actool.CoreTool) *Worker {
+	return &Worker{prov: prov, model: model, workDir: workDir, window: window, maxTurns: maxTurns, extraTools: extra}
 }
 
 // defaultToolsExcept returns actool.DefaultTools() minus the named tools (by
@@ -501,10 +490,6 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	if hooks != nil { // typed-nil guard: only set when concrete (avoids harness panic)
 		opts.Hooks = hooks
 	}
-	if w.tx != nil { // persist raw LLM conversation; one file per worked intent
-		opts.Transcript = w.tx
-		opts.SessionID = WorkerSessionID(ts.ID(), intent.ID)
-	}
 	intentID := intent.ID
 	emitWrap := func(r db.Activity) {
 		if emit != nil {
@@ -515,28 +500,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 意图、启动指令与意图锚定资产连同【全局态势 overview】随首轮 user 消息下发。
 	input := renderWorkerLaunchInput(intent, targetAssetsStr, overview)
 
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	noaSession := WorkerSessionID(ts.ID(), intent.ID)
-	enableNoa(&opts, w.noaEnabledFn, w.workDir, noaSession, noaWarn(noaSession))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)
 
-	// Resume prior conversation if this intent was paused/blocked/exhausted and is
-	// being re-run. The transcript ID is deterministic per intent, so if a prior
-	// session exists the worker continues from where it left off instead of
-	// restarting from scratch.
 	alreadyRecorded := false
-	if w.tx != nil {
-		_ = s.Resume(opts.SessionID)
-		alreadyRecorded = requestID != "" && hasWorkerChatMessage(s.Messages(), requestID)
-		if len(s.Messages()) > 0 && message == "" {
-			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
-			input = "继续执行。"
-		} else if len(s.Messages()) > 0 {
-			seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
-		}
-	}
 	if message != "" {
 		if alreadyRecorded {
 			input = "继续执行上一次人工对话输入的新意图。不要重复已经完成的动作。"

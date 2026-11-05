@@ -23,12 +23,10 @@ import (
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
-	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
 	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // BuildVersion is the backend application version, injected from cmd/artex at
@@ -59,7 +57,7 @@ type Server struct {
 	llmDirect llm.Provider // concrete global provider, before any failover pool
 	llmCfg    agent.Config // current LLM config (key not exposed)
 	llmOn     bool
-	llmProf   string // active LLM profile name (for llmrec tagging)
+	llmProf   string // active LLM profile name
 
 	// chatBusy guards the per-task main-agent run: the chat handler launches the
 	// agent on the server's background ctx (not the request ctx) and returns
@@ -444,7 +442,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 		s.cfgMu.Lock()
 		profName := s.llmProf
 		s.cfgMu.Unlock()
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, 0, profName)
 	}
 	s.cfgMu.Lock()
@@ -460,7 +457,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	// (agentsForTask), resolved through the engine's authoritative resolver. Global
 	// readiness (Ready()/llm_configured) is reported from s.llmOn, set below.
 
-	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
 	win := cfg.CompactionWindow()
 	// chat stays the GLOBAL fallback since one ChatAgent serves many agent keys — its
 	// per-agent binding is resolved at Chat time (runConversationSync →
@@ -469,13 +465,12 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	s.cfgMu.Lock()
 	// chat agent serves MANY custom agents by key → it holds the GLOBAL opts
 	// (backend/key) and gates Enabled per-conversation-agent at Chat time. 对话始终用激活配置。
-	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, tx, win) // chat page runner
+	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, win) // chat page runner
 	s.chatAgent.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	s.chatAgent.SetWebSearch(s.m.WebSearchOpts())
 	s.chatAgent.SetGuard(s.chatGuard())
 	s.chatAgent.SetNonStreaming(nonStreamingResolver(cfg))
 	s.chatAgent.SetMaxTokens(maxTokensResolver(cfg))
-	s.chatAgent.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.llmProv = prov
 	s.llmCfg = cfg
 	s.llmOn = true
@@ -578,7 +573,6 @@ func (s *Server) providerForProfile(id int64) (llm.Provider, agent.Config, bool)
 	}
 	// Wrap with recorder, tagged with this profile's name.
 	if p, _ := s.m.pg.ProfileByID(id); p != nil {
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, id, p.Name)
 	}
 	s.provCacheMu.Lock()
@@ -609,14 +603,12 @@ func (s *Server) chatAgentForProfile(id int64) *agent.ChatAgent {
 	if !ok {
 		return nil
 	}
-	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
-	ca := agent.NewChatAgent(s.poolForBinding(id, prov, cfg), cfg.Model, s.m.dir, tx, cfg.CompactionWindow())
+	ca := agent.NewChatAgent(s.poolForBinding(id, prov, cfg), cfg.Model, s.m.dir, cfg.CompactionWindow())
 	ca.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	ca.SetWebSearch(s.m.WebSearchOpts())
 	ca.SetGuard(s.chatGuard())
 	ca.SetNonStreaming(nonStreamingResolver(cfg))
 	ca.SetMaxTokens(maxTokensResolver(cfg))
-	ca.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.profMu.Lock()
 	if ex := s.profChatAgents[id]; ex != nil { // lost the race → keep the winner
 		ca = ex
@@ -792,11 +784,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/traffic/blob", s.getTrafficBlob)
 	mux.HandleFunc("GET /api/commands", s.pgListCommands)
 	mux.HandleFunc("GET /api/commands/stats", s.pgToolStats) // 按工具聚合调用次数
-	mux.HandleFunc("GET /api/llm/records", s.pgListLLMRecords)
-	mux.HandleFunc("DELETE /api/llm/records", s.pgDeleteLLMRecords)
-	mux.HandleFunc("GET /api/llm/records/tasks", s.pgLLMTasks)
 	mux.HandleFunc("GET /api/llm/records/by-model", s.pgTokenByModel) // 按模型聚合本任务 token 用量
-	mux.HandleFunc("GET /api/llm/records/{id}", s.pgGetLLMRecord)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
@@ -3292,7 +3280,6 @@ func (s *Server) settingsPayload() map[string]any {
 	return map[string]any{
 		"traffic_capture":          s.m.TrafficEnabled(),
 		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"llm_record":               s.m.LLMRecordEnabled(),
 		"web_search_enabled":       on,
 		"web_search_backend":       backend,
 		"brave_key_set":            strings.TrimSpace(braveKey) != "",
@@ -3310,9 +3297,6 @@ func (s *Server) settingsPayload() map[string]any {
 		// 操作约束注入范围(默认都开):把本任务的 allow/deny 约束拼进对应 agent 的系统提示。
 		"constraints_inject_planner": s.constraintInjectPlanner(),
 		"constraints_inject_worker":  s.constraintInjectWorker(),
-		// 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent 由 noa
-		// 接管上下文压缩,取代内置 compaction;每 run 读一次,对之后启动的 run 生效。
-		"noa_compaction": s.m.NoaCompactionEnabled(),
 		// 漏洞 IM 推送的全局项。渠道本身是独立资源，走 /api/notify/* 管理；
 		// 这里只放「作用于全部渠道」的三项。
 		"notify_enabled":             s.m.pg.GetBool(settingNotifyEnabled, true),
@@ -3362,7 +3346,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TrafficCapture      *bool `json:"traffic_capture"`
 		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
-		LLMRecord           *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -3383,8 +3366,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 操作约束注入范围开关(默认都开);即时生效(planner/worker 每轮读),无需重建 agent。
 		ConstraintsInjectPlanner *bool `json:"constraints_inject_planner"`
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
-		// 实验功能:noa 上下文压缩开关(默认关);每 run 读,对之后启动的 run 生效,无需重建 agent。
-		NoaCompaction *bool `json:"noa_compaction"`
 		// 漏洞 IM 推送的全局项。三者都由投递引擎每轮读一次，改完即时生效，
 		// 不需要重建 agent 或重启。
 		NotifyEnabled    *bool   `json:"notify_enabled"`
@@ -3403,13 +3384,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConstraintsInjectWorker != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectWorker, *req.ConstraintsInjectWorker); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.NoaCompaction != nil {
-		// 每 run 读的解析器,切换即时对之后启动的 run 生效,无需 applyLLM 重建。
-		if err := s.m.SetNoaCompaction(*req.NoaCompaction); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -3473,13 +3447,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PythonInterp != nil {
 		if err := s.m.pg.SetSetting(settingPythonInterp, strings.TrimSpace(*req.PythonInterp)); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.LLMRecord != nil {
-		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。
-		if err := s.m.SetLLMRecordEnabled(*req.LLMRecord); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

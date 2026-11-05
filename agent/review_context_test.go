@@ -92,7 +92,7 @@ func TestWorkerReviewContextAcrossToolCalls(t *testing.T) {
 		t.Fatal(err)
 	}
 	rawIntent, _ := json.Marshal(intentPayload)
-	worker := NewWorker(provider, "test-model", workDir, nil, 0, 3, probe)
+	worker := NewWorker(provider, "test-model", workDir, 0, 3, probe)
 	_, _, err = worker.Execute(ctx, "test-agent", expID, nil, ts, &db.Node{ID: intentID, Payload: rawIntent}, guard.NewWithInterceptor(ic).Hooks(), nil, nil, nil)
 	runDir := ensureRunDir(workDir, expID, intentID)
 	if err != nil {

@@ -20,9 +20,6 @@ func TestFindingTrafficLegacyArchiveDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	if err = d.EnsureLLMRecordsTable(); err != nil {
-		t.Fatal(err)
-	}
 	if err = d.EnsureLLMUsageTable(); err != nil {
 		t.Fatal(err)
 	}

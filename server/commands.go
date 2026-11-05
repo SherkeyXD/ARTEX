@@ -54,23 +54,6 @@ func commandTaskFilter(v string) *int64 {
 	return &n
 }
 
-// pgListLLMRecords returns paginated LLM call records.
-func (s *Server) pgListLLMRecords(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	page := atoiDefault(q.Get("page"), 0)
-	size := atoiDefault(q.Get("size"), 50)
-	model := q.Get("model")
-	session := q.Get("session")
-	task := q.Get("task")
-
-	records, total, err := s.m.PG().ListLLMRecords(model, session, task, page, size)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"records": records, "total": total})
-}
-
 // pgTokenByModel returns a task's LLM token usage grouped by model, from the
 // always-on llm_usage metering ledger. Accurate even with per-agent model bindings,
 // pool rotation/failover, and interrupted runs (every call is metered on success or
@@ -116,46 +99,4 @@ func (s *Server) pgUsageStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"by_profile": byProfile, "daily": daily})
-}
-
-// pgLLMTasks returns distinct recorded tasks with counts, for the page's task
-// picker (pick a task → filter the list, then delete its conversations).
-func (s *Server) pgLLMTasks(w http.ResponseWriter, r *http.Request) {
-	tasks, err := s.m.PG().LLMTasks()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"tasks": tasks})
-}
-
-// pgDeleteLLMRecords removes all LLM records for one exact task_id (the same
-// match the task picker uses). Empty task → 400. Returns rows deleted.
-func (s *Server) pgDeleteLLMRecords(w http.ResponseWriter, r *http.Request) {
-	task := strings.TrimSpace(r.URL.Query().Get("task"))
-	if task == "" {
-		writeErr(w, 400, "missing task")
-		return
-	}
-	n, err := s.m.PG().DeleteLLMRecords(task)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n})
-}
-
-// pgGetLLMRecord returns a single LLM record with full request/response bodies.
-func (s *Server) pgGetLLMRecord(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeErr(w, 400, "invalid id")
-		return
-	}
-	rec, err := s.m.PG().GetLLMRecord(id)
-	if err != nil {
-		writeErr(w, 404, "not found")
-		return
-	}
-	writeJSON(w, 200, rec)
 }

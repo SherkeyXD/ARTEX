@@ -210,7 +210,6 @@ function deleteDetails(result: DeleteCounts): string[] {
   if (result.traffic_deleted > 0) details.push(`删除流量 ${result.traffic_deleted} 条`);
   if (result.files_deleted) details.push("删除任务文件");
   if (result.findings_deleted > 0) details.push(`删除漏洞 ${result.findings_deleted} 条`);
-  if (result.llm_records_deleted > 0) details.push(`删除 LLM 请求/响应记录 ${result.llm_records_deleted} 条`);
   return details;
 }
 
@@ -621,7 +620,6 @@ export default function TasksPage() {
         traffic_deleted: 0,
         files_deleted: false,
         findings_deleted: 0,
-        llm_records_deleted: 0,
       };
       const deleted: string[] = [];
       const failed: { id: string; message: string }[] = [];
@@ -635,7 +633,6 @@ export default function TasksPage() {
           total.traffic_deleted += r.traffic_deleted;
           total.files_deleted = total.files_deleted || r.files_deleted;
           total.findings_deleted += r.findings_deleted;
-          total.llm_records_deleted += r.llm_records_deleted;
           if (r.cleanup_warning) warnings.push(`#${id}：${r.cleanup_warning}`);
           deleted.push(id);
         } catch (e) {
@@ -2016,7 +2013,6 @@ const emptyDeleteOptions = (): DeleteTaskOptions => ({
   delete_traffic: false,
   delete_files: false,
   delete_findings: false,
-  delete_llm_records: false,
 });
 
 const deleteOptionKeys: (keyof DeleteTaskOptions)[] = [
@@ -2024,7 +2020,6 @@ const deleteOptionKeys: (keyof DeleteTaskOptions)[] = [
   "delete_traffic",
   "delete_files",
   "delete_findings",
-  "delete_llm_records",
 ];
 
 // DeleteOptionFields renders the「同时清理关联数据」checkbox block shared by the
@@ -2059,7 +2054,6 @@ function DeleteOptionFields({
       delete_traffic: checked,
       delete_files: checked,
       delete_findings: checked,
-      delete_llm_records: checked,
     });
   };
 
@@ -2120,17 +2114,6 @@ function DeleteOptionFields({
           <FieldContent>
             <FieldLabel htmlFor={`delete-findings-${idPrefix}`}>关联漏洞</FieldLabel>
             <FieldDescription>永久删除该任务产生的独立漏洞记录与漏洞报告。</FieldDescription>
-          </FieldContent>
-        </Field>
-        <Field orientation="horizontal">
-          <Checkbox
-            id={`delete-llm-records-${idPrefix}`}
-            checked={options.delete_llm_records}
-            onCheckedChange={(checked) => updateOption("delete_llm_records", checked === true)}
-          />
-          <FieldContent>
-            <FieldLabel htmlFor={`delete-llm-records-${idPrefix}`}>LLM 请求/响应记录</FieldLabel>
-            <FieldDescription>永久删除该任务录制的 LLM 请求、响应、Token 与错误详情。</FieldDescription>
           </FieldContent>
         </Field>
       </FieldGroup>

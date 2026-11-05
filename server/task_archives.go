@@ -151,22 +151,9 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 			runErr = errors.Join(runErr, fileStage.rollback())
 		}
 	}()
-	streamPath := filepath.Join(fileStage.payload, filepath.FromSlash(pgdb.TaskArchiveLLMRecordsPath))
-	if err := os.MkdirAll(filepath.Dir(streamPath), archiveDirMode); err != nil {
-		return err
-	}
-	streamFile, err := os.OpenFile(streamPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, archiveFileMode)
-	if err != nil {
-		return err
-	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "snapshot_database", 20)
-	snapshot, snapshotErr := s.m.pg.SnapshotTaskArchiveWithLLMRecords(job.TaskID, streamFile)
-	var syncErr error
-	if snapshotErr == nil {
-		syncErr = streamFile.Sync()
-	}
-	closeErr := streamFile.Close()
-	if err := errors.Join(snapshotErr, syncErr, closeErr); err != nil {
+	snapshot, err := s.m.pg.SnapshotTaskArchive(job.TaskID)
+	if err != nil {
 		return err
 	}
 	if snapshot.ExplorationID != task.ExplorationID {

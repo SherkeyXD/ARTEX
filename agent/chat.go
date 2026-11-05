@@ -13,7 +13,6 @@ import (
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // ChatAgent is the generic, task-independent conversational runner behind the chat
@@ -26,19 +25,17 @@ type ChatAgent struct {
 	prov           llm.Provider
 	model          string
 	workDir        string
-	tx             *transcript.Store
 	window         int
 	proxyAddr      string
 	proxyCACert    string
 	webSearch      WebSearchOpts
 	guard          *guard.Guard // optional; nil disables intercept hooks for chat
 	nonStreamingFn func() bool  // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn   func() bool  // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn    func() int   // resolver: per-reply output cap (nil/0 = send no cap)
 }
 
-func NewChatAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window int) *ChatAgent {
-	return &ChatAgent{prov: prov, model: model, workDir: workDir, tx: tx, window: window}
+func NewChatAgent(prov llm.Provider, model, workDir string, window int) *ChatAgent {
+	return &ChatAgent{prov: prov, model: model, workDir: workDir, window: window}
 }
 
 // SetNonStreaming wires a resolver deciding whether chat runs use the
@@ -46,11 +43,6 @@ func NewChatAgent(prov llm.Provider, model, workDir string, tx *transcript.Store
 func (c *ChatAgent) SetNonStreaming(fn func() bool) { c.nonStreamingFn = fn }
 
 func (c *ChatAgent) nonStreaming() bool { return c.nonStreamingFn != nil && c.nonStreamingFn() }
-
-// SetNoaEnabled wires a resolver deciding whether chat runs use the experimental
-// noa context-compression mechanism. nil/unset = off (built-in compaction). Read
-// per run so the settings toggle takes effect without rebuilding the agent.
-func (c *ChatAgent) SetNoaEnabled(fn func() bool) { c.noaEnabledFn = fn }
 
 // SetMaxTokens wires a resolver for the per-reply output cap. nil/unset or 0 =
 // send no cap and let the endpoint decide. Read per run, like nonStreaming.
@@ -163,23 +155,9 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	if c.guard != nil {
 		opts.Hooks = c.guard.Hooks()
 	}
-	if c.tx != nil { // persist raw human↔AI conversation; one accumulating file per thread
-		opts.Transcript = c.tx
-		opts.SessionID = sessionID
-	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	enableNoa(&opts, c.noaEnabledFn, c.workDir, "chat-"+sessionID, noaWarn("chat-"+sessionID))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()
-	// reload prior conversation so the agent has context across turns (each Chat is
-	// a fresh session). First turn: no file yet → Resume loads nothing and proceeds.
-	if c.tx != nil {
-		_ = s.Resume(sessionID)
-	}
-	// re-unlock skill-gated MCPs from prior Skill() calls in the reloaded history so
-	// revealed tools stay callable across the fresh session.
-	seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
 	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
 		if emit != nil {
 			r.Worker = agentKey

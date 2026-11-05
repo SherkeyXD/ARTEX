@@ -13,7 +13,6 @@ import (
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // Planner is the event-driven LLM planner (docs §4.3): each time the asset or
@@ -24,7 +23,6 @@ type Planner struct {
 	findingRecorder   FindingRecorder
 	prov              llm.Provider
 	model             string
-	tx                *transcript.Store                      // raw LLM conversation persistence (nil = off)
 	window            int                                    // context window in tokens (for compaction)
 	windowFn          func() int                             // optional dynamic task-chain minimum
 	maxTurns          int                                    // max agent turns per run (0 = unlimited)
@@ -36,7 +34,6 @@ type Planner struct {
 	workDir           string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	injectConstraints func() bool                            // resolver: inject task operation constraints into system prompt? (nil = yes)
 	nonStreamingFn    func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn      func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn       func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 	compactor         *Compactor                             // cold-node compaction (§7); nil = disabled
 
@@ -48,8 +45,8 @@ type Planner struct {
 	todos  map[int64]*actool.TodoStore
 }
 
-func NewPlanner(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *Planner {
-	return &Planner{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns, todos: map[int64]*actool.TodoStore{}}
+func NewPlanner(prov llm.Provider, model, workDir string, window, maxTurns int) *Planner {
+	return &Planner{prov: prov, model: model, workDir: workDir, window: window, maxTurns: maxTurns, todos: map[int64]*actool.TodoStore{}}
 }
 
 func (p *Planner) SetCompactionWindowResolver(fn func() int) { p.windowFn = fn }
@@ -64,11 +61,6 @@ func (p *Planner) SetCompactor(c *Compactor) { p.compactor = c }
 func (p *Planner) SetNonStreaming(fn func() bool) { p.nonStreamingFn = fn }
 
 func (p *Planner) nonStreaming() bool { return p.nonStreamingFn != nil && p.nonStreamingFn() }
-
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (p *Planner) SetNoaEnabled(fn func() bool) { p.noaEnabledFn = fn }
 
 // SetMaxTokens wires a resolver for the per-reply output cap. nil/unset or 0 =
 // send no cap and let the endpoint decide. Read per run, like nonStreaming.
@@ -552,13 +544,6 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		NonStreaming: p.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    p.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
-	if p.tx != nil { // persist raw LLM conversation; one accumulating file per task's planner
-		opts.Transcript = p.tx
-		opts.SessionID = fmt.Sprintf("exp%d-planner", ts.ID())
-	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	noaSession := fmt.Sprintf("exp%d-planner", ts.ID())
-	enableNoa(&opts, p.noaEnabledFn, p.workDir, noaSession, noaWarn(noaSession))
 	// 态势（刚完成的意图 + 完整图）现在拼进本轮 user 输入（见下方 input）。user 里还有
 	// 指令 + 跨唤醒待办（todo 是模型自己的规划便签，可再生，放 user 即可）。
 	// 开场白按「本轮有无具体变动」分两种：有变动 → 指向下方【实际变动】块；无变动

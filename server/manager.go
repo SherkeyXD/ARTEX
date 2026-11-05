@@ -198,7 +198,6 @@ type DeleteTaskOptions struct {
 	DeleteTraffic    bool `json:"delete_traffic"`
 	DeleteFiles      bool `json:"delete_files"`
 	DeleteFindings   bool `json:"delete_findings"`
-	DeleteLLMRecords bool `json:"delete_llm_records"`
 }
 
 // DeleteTaskResult makes destructive cleanup auditable to API callers.
@@ -209,7 +208,6 @@ type DeleteTaskResult struct {
 	TrafficDeleted    int64  `json:"traffic_deleted"`
 	FilesDeleted      bool   `json:"files_deleted"`
 	FindingsDeleted   int64  `json:"findings_deleted"`
-	LLMRecordsDeleted int64  `json:"llm_records_deleted"`
 	CleanupWarning    string `json:"cleanup_warning,omitempty"`
 }
 
@@ -232,7 +230,6 @@ type Manager struct {
 	tasks       map[string]*Task
 	active      string
 	trafficOn   bool // 流量捕获开关（默认关；settings.traffic_capture）
-	llmRecOn    bool // LLM 录制开关（默认关；settings.llm_record）
 	// 联网搜索开关与来源（默认关；settings.web_search_*）。brave-free 需要 braveKey；tavily 需要 tavilyKey。
 	// webSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关。
 	webSearchOn      bool
@@ -261,7 +258,6 @@ const (
 	// only routes the search backend) and the per-profile LLM proxy.
 	settingGlobalProxy = "global_proxy"
 	settingWorkers     = "workers"
-	settingLLMRecord   = "llm_record"
 	// LLM 轮询(故障转移)。默认关闭——开启后走「全局激活配置」的 agent 在当前配置
 	// 不可用(余额不足/key 失效/限流/服务异常)时自动切到下一个配置。
 	// settingLLMPoolBindFallback 仅在轮询开启时有意义:默认关闭,即 agent/任务显式
@@ -271,10 +267,6 @@ const (
 	// 任务并发上限:开关 + 上限数。默认关闭;开启后默认上限 5(见 defaultConcurrencyLimit)。
 	settingConcurrencyOn    = "task_concurrency_enabled"
 	settingConcurrencyLimit = "task_concurrency_limit"
-	// 实验功能:noa 模型驱动上下文压缩(norma v0.4.0)。默认关闭——开启后平台接入的四类
-	// agent(planner/worker/主 agent/对话)由 noa 接管上下文压缩,取代内置 compaction。
-	// 每 run 读一次,切换只影响之后启动的 run。
-	settingNoaCompaction = "noa_compaction"
 	// defaultWebSearchBackend is used when web search is on but no backend was picked.
 	defaultWebSearchBackend = "ddgs"
 	// deepSeekWebSearchBackend borrows the active LLM profile instead of its own
@@ -367,9 +359,6 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 		pg.Close()
 		return nil, fmt.Errorf("recover finding retests: %w", err)
 	}
-	if err := pg.EnsureLLMRecordsTable(); err != nil {
-		log.Printf("[llmrec] create table: %v", err)
-	}
 	if err := pg.EnsureLLMUsageTable(); err != nil {
 		log.Printf("[llmusage] create table: %v", err)
 	}
@@ -410,8 +399,6 @@ func NewManager(dir, proxyAddr string) (*Manager, error) {
 	// Asset auto-completion engine (§5): HTTP probes routed through the recording
 	// proxy (via m.ProxyAddr, which honors the traffic-capture toggle).
 	m.trafficOn = pg.GetBool(settingTrafficCapture, false)
-	// LLM 录制开关（默认关）。录制器每次调用时读取此标志。
-	m.llmRecOn = pg.GetBool(settingLLMRecord, false)
 	// Load persisted web-search config (default: off, ddgs).
 	m.webSearchOn = pg.GetBool(settingWebSearchOn, false)
 	if v, ok, _ := pg.GetSetting(settingWebSearchBackend); ok && v != "" {
@@ -469,40 +456,6 @@ func (m *Manager) SetTrafficEnabled(on bool) error {
 	// which re-spawns the MCP with the new args/env.
 	m.syncBrowserMCPProxy()
 	return nil
-}
-
-// LLMRecordEnabled reports whether LLM request/response recording is on
-// (默认关；settings.llm_record). The recorder consults this per call, so the
-// toggle takes effect immediately without rebuilding agents.
-func (m *Manager) LLMRecordEnabled() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.llmRecOn
-}
-
-// SetLLMRecordEnabled persists and applies the LLM-record toggle. Effective at
-// once — no applyLLM needed, since the recorder reads the flag on every call.
-func (m *Manager) SetLLMRecordEnabled(on bool) error {
-	if err := m.pg.SetBool(settingLLMRecord, on); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	m.llmRecOn = on
-	m.mu.Unlock()
-	return nil
-}
-
-// NoaCompactionEnabled reports whether the experimental noa context-compression
-// mechanism is on (默认关；settings.noa_compaction). Read per agent run via the
-// injected resolver, so a toggle takes effect on the next run without rebuild.
-func (m *Manager) NoaCompactionEnabled() bool {
-	return m.pg.GetBool(settingNoaCompaction, false)
-}
-
-// SetNoaCompaction persists the noa toggle. Effective on the next agent run —
-// the resolver reads it per run, so no rebuild is needed.
-func (m *Manager) SetNoaCompaction(on bool) error {
-	return m.pg.SetBool(settingNoaCompaction, on)
 }
 
 // LLMPoolEnabled reports whether LLM failover ("轮询") is on (默认关；
@@ -1480,7 +1433,7 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 	}
 
 	dbResult, err := m.pg.DeleteTaskCascadePrepared(
-		n, opts.DeleteAssets, opts.DeleteFindings, opts.DeleteLLMRecords, prepare,
+		n, opts.DeleteAssets, opts.DeleteFindings, prepare,
 	)
 	if err != nil {
 		return result, rollbackTaskDelete(err, trafficStage, fileStage)
@@ -1488,7 +1441,6 @@ func (m *Manager) DeleteTask(id string, opts DeleteTaskOptions) (DeleteTaskResul
 	result.AssetsDeleted = dbResult.AssetsDeleted
 	result.AssetsDetached = dbResult.AssetsDetached
 	result.FindingsDeleted = dbResult.FindingsDeleted
-	result.LLMRecordsDeleted = dbResult.LLMRecordsDeleted
 
 	// PostgreSQL is now authoritative: finalize the staged external deletion and
 	// forget the live task even if a final purge reports an error. Such errors are

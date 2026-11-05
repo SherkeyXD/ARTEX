@@ -17,7 +17,6 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/sidequestion"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/transcript"
@@ -429,9 +428,6 @@ func (s *Server) runSide(ctx context.Context, cancel context.CancelFunc, e sideq
 		s.side.mu.Unlock()
 	}()
 	ctx = transcript.WithSessionID(ctx, fmt.Sprintf("exp%d-btw-%s", parent.ExplorationID, e.ID))
-	if parent.TaskID > 0 {
-		ctx = llmrec.WithTaskID(ctx, strconv.FormatInt(parent.TaskID, 10))
-	}
 	// Deletions can race between request insertion and registration. Observe the
 	// persisted lifecycle even while a provider is blocked without emitting text.
 	go func() {

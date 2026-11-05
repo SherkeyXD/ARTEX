@@ -79,8 +79,8 @@ type GoalSpec struct {
 //
 // prov is supplied by the caller (rather than built here from a Config) so goal
 // decomposition rides the SAME provider instance as the rest of the engine — it
-// shares the rate limiter, gets recorded by llmrec, and participates in LLM
-// failover instead of quietly bypassing all three.
+// shares the rate limiter and participates in LLM
+// failover instead of quietly bypassing both.
 //
 // desc is the task's free-text description (背景：靶标范围/flag 数量/交战说明等).
 // It is fed alongside the goal so the decomposer no longer splits blind — the
@@ -116,7 +116,7 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	// 做提示缓存/粘性路由的网关（opencode zen 缺 x-opencode-session 直接 400
 	// MissingSessionID）读的就是 ctx 上这个值——不补就是「对话正常、拆解 400」。
 	// 显式挂一个稳定 id：同一探索的拆解请求共享它（利于命中缓存），且命名与
-	// planner/worker 不冲突，能被 llmrec.parseSession 正确归因。
+	// planner/worker 不冲突。
 	if ts != nil {
 		ctx = transcript.WithSessionID(ctx, fmt.Sprintf("exp%d-goals", ts.ID()))
 	}

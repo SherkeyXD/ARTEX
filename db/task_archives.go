@@ -589,7 +589,6 @@ func (d *DB) snapshotTaskArchive(taskID int64, llmRecords io.Writer) (*TaskArchi
 		{"findings", `SELECT * FROM findings WHERE task_id=$1 ORDER BY id`, []any{taskID}},
 		{"finding_traffic_bindings", `SELECT b.* FROM finding_traffic_bindings b JOIN findings f ON f.id=b.finding_id WHERE f.task_id=$1 ORDER BY b.finding_id,b.position,b.id`, []any{taskID}},
 		{"traffic_evidence_snapshots", `SELECT s.* FROM traffic_evidence_snapshots s WHERE EXISTS(SELECT 1 FROM finding_traffic_bindings b JOIN findings f ON f.id=b.finding_id WHERE b.snapshot_id=s.id AND f.task_id=$1) ORDER BY s.id`, []any{taskID}},
-		{"llm_records", `SELECT * FROM llm_records WHERE COALESCE(task_id,'')=$1 ORDER BY id`, []any{strconv.FormatInt(taskID, 10)}},
 		{"llm_usage", `SELECT * FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2 ORDER BY id`, []any{strconv.FormatInt(taskID, 10), expID}},
 		{"skill_usage", `SELECT * FROM skill_usage WHERE task_id=$1 OR exploration_id=$2 ORDER BY id`, []any{taskID, expID}},
 		{"tool_usage", `SELECT * FROM tool_usage WHERE task_id=$1 OR exploration_id=$2 ORDER BY id`, []any{taskID, expID}},
@@ -601,16 +600,6 @@ func (d *DB) snapshotTaskArchive(taskID int64, llmRecords io.Writer) (*TaskArchi
 	counts := make(map[string]int64, len(queries))
 	streamedTables := map[string]string{}
 	for _, query := range queries {
-		if query.name == "llm_records" && llmRecords != nil {
-			count, err := streamArchiveRows(tx, llmRecords, query.query, query.args...)
-			if err != nil {
-				return nil, fmt.Errorf("snapshot %s: %w", query.name, err)
-			}
-			tables[query.name] = json.RawMessage("[]")
-			counts[query.name] = count
-			streamedTables[query.name] = TaskArchiveLLMRecordsPath
-			continue
-		}
 		raw, count, err := queryArchiveRows(tx, query.query, query.args...)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot %s: %w", query.name, err)
