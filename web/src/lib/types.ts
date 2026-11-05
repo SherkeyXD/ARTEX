@@ -1458,3 +1458,96 @@ export interface InterceptExecution {
   seq: number;
   items: Activity[];
 }
+
+export interface ContextSummary {
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cache_hit_rate: number;
+  total_duration_ms: number;
+  thinking_duration_ms: number;
+  tool_duration_ms: number;
+  llm_duration_ms: number;
+  step_count: number;
+  llm_calls: number;
+  tool_calls: number;
+  avg_tokens_per_sec: number;
+}
+
+export interface ContextCategory {
+  name: string;
+  category: "tool_output" | "history" | "thinking" | "system" | "user" | "tool_use" | string;
+  tokens: number;
+  chars: number;
+  percentage: number;
+  color: string;
+}
+
+export interface TopToolOutput {
+  tool: string;
+  summary: string;
+  char_count: number;
+  estimated_tokens: number;
+  duration_ms: number;
+  node_id?: number | null;
+}
+
+export interface ContextComposition {
+  categories: ContextCategory[];
+  top_tool_outputs: TopToolOutput[];
+}
+
+export interface WaterfallStep {
+  id: number;
+  node_id?: number | null;
+  worker: string;
+  kind: string;
+  tool?: string;
+  summary: string;
+  duration_ms: number;
+  char_count?: number;
+  tokens?: number;
+  timestamp: string;
+  offset_ms: number;
+}
+
+export interface EvolutionTurn {
+  turn_index: number;
+  worker: string;
+  node_id?: number | null;
+  cumulative_input: number;
+  cumulative_output: number;
+  cumulative_cache: number;
+  turn_duration_ms: number;
+  ttft_ms: number;
+  thinking_ms: number;
+  tool_ms: number;
+  timestamp: string;
+}
+
+export interface FleetAgent {
+  worker: string;
+  role: string;
+  intent_id?: number | null;
+  model: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  duration_ms: number;
+  step_count: number;
+  tool_calls: number;
+  status: string;
+}
+
+export interface TaskContextMetricsReport {
+  task_id: number;
+  summary: ContextSummary;
+  composition: ContextComposition;
+  waterfall: WaterfallStep[];
+  turns: EvolutionTurn[];
+  fleet: FleetAgent[];
+}
