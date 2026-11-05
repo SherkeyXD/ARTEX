@@ -101,7 +101,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.14] - 2026-09-24
 
@@ -127,7 +127,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.13] - 2026-09-19
 
@@ -167,7 +167,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.12] - 2026-09-17
 
@@ -236,7 +236,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@RuoJi6](https://github.com/RuoJi6)
 - [@dingpotian](https://github.com/dingpotian)
 
@@ -292,7 +292,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@RuoJi6](https://github.com/RuoJi6)
 
 ## [0.3.10] - 2026-09-13
@@ -332,7 +332,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.9] - 2026-09-11
 
@@ -428,7 +428,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@RuoJi6](https://github.com/RuoJi6)
 
 ## [0.3.8] - 2026-09-09
@@ -501,7 +501,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.7] - 2026-08-31
 
@@ -563,7 +563,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@neouks](https://github.com/neouks)
 - [@begininvoke](https://github.com/begininvoke)
 
@@ -596,7 +596,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 
 ## [0.3.5] - 2026-08-25
 
@@ -644,7 +644,7 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@neouks](https://github.com/neouks)
 
 ## [0.3.4] - 2026-08-24
@@ -883,16 +883,16 @@
 
 ### 贡献者
 
-- [@Autumn-27](https://github.com/Autumn-27)
+- [@SherkeyXD](https://github.com/SherkeyXD)
 - [@neouks](https://github.com/neouks)
 
-[Unreleased]: https://github.com/Autumn-27/ARTEX/compare/v0.3.10...HEAD
-[0.3.10]: https://github.com/Autumn-27/ARTEX/compare/v0.3.9...v0.3.10
-[0.3.9]: https://github.com/Autumn-27/ARTEX/compare/v0.3.8...v0.3.9
-[0.3.8]: https://github.com/Autumn-27/ARTEX/compare/v0.3.7...v0.3.8
-[0.3.7]: https://github.com/Autumn-27/ARTEX/compare/v0.3.6...v0.3.7
-[0.3.6]: https://github.com/Autumn-27/ARTEX/compare/v0.3.5...v0.3.6
-[0.3.5]: https://github.com/Autumn-27/ARTEX/compare/v0.3.4...v0.3.5
-[0.3.4]: https://github.com/Autumn-27/ARTEX/compare/v0.3.3...v0.3.4
-[0.3.3]: https://github.com/Autumn-27/ARTEX/compare/v0.3.2...v0.3.3
-[0.3.2]: https://github.com/Autumn-27/ARTEX/compare/v0.3.1...v0.3.2
+[Unreleased]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.10...HEAD
+[0.3.10]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.9...v0.3.10
+[0.3.9]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.8...v0.3.9
+[0.3.8]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.7...v0.3.8
+[0.3.7]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.6...v0.3.7
+[0.3.6]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/SherkeyXD/ARTEX/compare/v0.3.1...v0.3.2

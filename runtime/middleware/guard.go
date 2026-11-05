@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/Autumn-27/artex/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 // GuardFunc evaluates whether a tool call should be allowed to proceed.

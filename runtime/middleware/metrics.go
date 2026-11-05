@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Autumn-27/artex/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 // StepMetric records latency and volume metrics for a single execution step.
