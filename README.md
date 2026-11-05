@@ -78,7 +78,7 @@ cd ARTEX
 git clone https://github.com/SherkeyXD/ARTEX.git
 cd ARTEX
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 autumn27/artex 镜像 + postgres
+docker compose up -d          # 拉取 sherkeyxd/artex 镜像 + postgres
 # → http://localhost:8787
 ```
 
@@ -137,7 +137,7 @@ ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
 
 ### 本仓库的私有 Release 更新源
 
-页面一键更新固定从 [SherkeyXD/ARTEX Releases](https://github.com/SherkeyXD/ARTEX/releases) 检查和下载版本。克隆或通过 Git 更新源码也使用 `SherkeyXD/ARTEX`；原项目的 Go module 路径保持不变。
+页面一键更新固定从 [SherkeyXD/ARTEX Releases](https://github.com/SherkeyXD/ARTEX/releases) 检查和下载版本。克隆或通过 Git 更新源码也使用 `SherkeyXD/ARTEX`。
 
 这是私有仓库。请为运行 ARTEX 的后端进程设置 `ARTEX_UPDATE_GITHUB_TOKEN`，令牌只需本仓库的 **Contents: read** 权限。令牌由后端用于查询 Release 和下载附件，不发送给浏览器，也不要提交到 Git。
 

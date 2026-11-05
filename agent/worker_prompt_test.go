@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Autumn-27/artex/db"
+	"github.com/SherkeyXD/ARTEX/db"
 )
 
 func TestWorkerSystemPromptIsStaticAcrossIntents(t *testing.T) {

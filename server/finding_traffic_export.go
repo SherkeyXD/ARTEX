@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/report"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/report"
 )
 
 func writeFindingsEvidenceZip(out io.Writer, findings []*db.DBFinding, now time.Time) error {

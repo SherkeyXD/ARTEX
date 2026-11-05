@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/artex/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 func init() {

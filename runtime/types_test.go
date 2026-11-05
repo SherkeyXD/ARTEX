@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/Autumn-27/artex/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 func TestCanonicalMessage(t *testing.T) {

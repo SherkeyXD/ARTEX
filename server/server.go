@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Autumn-27/artex/agent"
-	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/intercept"
-	"github.com/Autumn-27/artex/llmpool"
-	"github.com/Autumn-27/artex/report"
+	"github.com/SherkeyXD/ARTEX/agent"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llmpool"
+	"github.com/SherkeyXD/ARTEX/report"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
