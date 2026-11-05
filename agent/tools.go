@@ -1958,13 +1958,13 @@ func traceSteps(acts []db.Activity) []map[string]any {
 func (t *ToolSet) getWorkerTrace() actool.CoreTool {
 	return t.readExpTool("get_worker_trace",
 		"查看某条意图(work)的【执行过程】（区别于 get_worker_output 只给最终结论）。三种用法：\n"+
-			"① 只传 intent_id → 返回该 work 每一步的摘要流（summary≤100字，含 step_id；只是动作轮廓，不含完整输出）；\n"+
-			"② intent_id + q → 只返回命中关键字的步骤摘要（在摘要和完整输出里都搜；仍只给 summary，要看内容用③）；\n"+
+			"① 只传 intent_id → 返回该 work 每一步的动作轮廓流（summary≤100字，含 step_id，不含细节输出）；\n"+
+			"② intent_id + q → grep 检索命中关键字的步骤，直接返回匹配行的行号与上下文 snippet（前后各 2 行）；\n"+
 			"③ intent_id + step_ids → 返回这些步骤的完整内容(detail)；一次最多取 5 个，超出只返回前 5 个并在 notice/omitted_step_ids 里告知未取的。\n"+
-			"典型流程：先①/②定位可疑步骤的 step_id，再用③取其完整输出。不含思考(thinking)步骤。支持直接关联任务的历史 trace；其结果带 source_task_id/inherited=true 且只读。",
+			"典型流程：先用 search_all_worker_traces 或②按关键字 grep 检索定位；若已在 matches 中看清线索，无需再取全文；确需完整输出时才用③取 detail。不含思考(thinking)步骤。支持直接关联任务的历史 trace；其结果带 source_task_id/inherited=true 且只读。",
 		obj(map[string]any{
 			"intent_id": idp("意图 id（= work 句柄）"),
-			"q":         str("关键字：只返回摘要/完整输出命中它的步骤（可选；与 step_ids 互斥）"),
+			"q":         str("关键字：grep 检索并返回匹配行及上下文 snippet（可选；与 step_ids 互斥）"),
 			"step_ids":  map[string]any{"type": "array", "items": map[string]any{"type": "integer"}, "description": "要取完整内容的 step_id（来自①/②返回；一次最多取 5 个，多传只返回前 5 个，其余在 omitted_step_ids 里列出）"},
 			"limit":     intp("摘要流/检索的返回上限（可选）"),
 		}, "intent_id"),
@@ -2042,14 +2042,48 @@ func (t *ToolSet) getWorkerTrace() actool.CoreTool {
 				}
 				return jsonResult(result)
 			}
-			// ①/② summary stream, optionally keyword-filtered; 100-char summaries.
-			var acts []db.Activity
-			var err error
+			// ①/② summary stream, optionally keyword-filtered; with q, returns grep-style snippets.
 			if strings.TrimSpace(a.Q) != "" {
-				acts, err = t.ts.ActivityTraceSearchWithSources(id, a.Q, a.Limit)
-			} else {
-				acts, err = t.ts.ActivityTraceWithSources(id, a.Limit)
+				acts, err := t.ts.ActivityTraceSearchWithSources(id, a.Q, a.Limit)
+				if err != nil {
+					return actool.Errorf(err.Error()), nil
+				}
+				stepIDs := make([]int64, len(acts))
+				for i := range acts {
+					stepIDs[i] = acts[i].ID
+				}
+				var details []db.Activity
+				if len(stepIDs) > 0 {
+					details, _ = t.ts.ActivityByIDsWithSources(stepIDs)
+				}
+				detailMap := make(map[int64]string, len(details))
+				for _, d := range details {
+					detailMap[d.ID] = d.Detail
+				}
+				steps := make([]map[string]any, 0, len(acts))
+				for i := range acts {
+					detail := detailMap[acts[i].ID]
+					matches := ExtractGrepMatches(detail, a.Q, 2, 5)
+					if len(matches) == 0 && strings.Contains(strings.ToLower(acts[i].Summary), strings.ToLower(a.Q)) {
+						matches = ExtractGrepMatches(acts[i].Summary, a.Q, 1, 3)
+					}
+					step := map[string]any{
+						"step_id": acts[i].ID, "kind": acts[i].Kind, "tool": acts[i].Tool,
+						"is_error": acts[i].IsError, "summary": firstLine(acts[i].Summary, 100),
+						"matches": matches,
+					}
+					if acts[i].Inherited {
+						inheritedMap(step, acts[i].SourceTaskID)
+					}
+					steps = append(steps, step)
+				}
+				result := map[string]any{"intent_id": id, "query": a.Q, "steps": steps}
+				if intentNode.Inherited {
+					inheritedMap(result, intentNode.SourceTaskID)
+				}
+				return jsonResult(result)
 			}
+			acts, err := t.ts.ActivityTraceWithSources(id, a.Limit)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
@@ -2062,16 +2096,17 @@ func (t *ToolSet) getWorkerTrace() actool.CoreTool {
 }
 
 // searchAllWorkerTraces keyword-searches EVERY work's process in this task — for
-// finding what a worker saw but never wrote back as a fact. Returns only matching
-// summaries (≤100 chars), each tagged with its intent_id for follow-up drill-down.
+// finding what a worker saw but never wrote back as a fact. Returns matching
+// summaries with grep-style context snippets (line numbers + surrounding lines),
+// each tagged with its intent_id.
 func (t *ToolSet) searchAllWorkerTraces() actool.CoreTool {
 	return t.readExpTool("search_all_worker_traces",
-		"【通常不推荐使用，因为系统中已经给了大部分信息了】在【本任务其他 work 的执行过程】里按关键字(q)检索——用于找回某个 worker 见过、却没写进 fact 的东西（某路径/token/报错等）。"+
+		"在【本任务其他 work 的执行过程】里按关键字(q)检索——用于找回某个 worker 见过、却没写进 fact 的东西（某路径/token/报错等）。"+
 			"已自动排除你自己这条意图的步骤（那些本就在你上下文里）。"+
-			"只返回命中步骤的摘要(summary≤100字)，每条带 intent_id；据此再用 get_worker_trace(intent_id, step_ids=[...]) 取完整内容。",
+			"以 grep 风格直接返回命中行的行号与上下文 snippet（前后各 2 行），通常无需再调用 get_worker_trace 取全文即可看清关键线索与数据。",
 		obj(map[string]any{
 			"q":     str("关键字（在所有 work 步骤的摘要+完整输出里搜）"),
-			"limit": intp("返回上限，默认 100（可选）"),
+			"limit": intp("返回步骤上限，默认 50（可选）"),
 		}, "q"),
 		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
@@ -2082,21 +2117,48 @@ func (t *ToolSet) searchAllWorkerTraces() actool.CoreTool {
 			if strings.TrimSpace(a.Q) == "" {
 				return actool.Errorf("q 必填"), nil
 			}
+			limit := a.Limit
+			if limit <= 0 {
+				limit = 50
+			}
 			// 排除调用者自身这条意图的步骤（worker 的自有 trace 已在其上下文里）。
-			acts, err := t.ts.ActivityTraceSearchAllWithSources(t.ownerNode, a.Q, a.Limit)
+			acts, err := t.ts.ActivityTraceSearchAllWithSources(t.ownerNode, a.Q, limit)
 			if err != nil {
 				return actool.Errorf(err.Error()), nil
 			}
+			if len(acts) == 0 {
+				return jsonResult(map[string]any{"query": a.Q, "hits": []any{}})
+			}
+
+			stepIDs := make([]int64, len(acts))
+			for i := range acts {
+				stepIDs[i] = acts[i].ID
+			}
+			var details []db.Activity
+			if len(stepIDs) > 0 {
+				details, _ = t.ts.ActivityByIDsWithSources(stepIDs)
+			}
+			detailMap := make(map[int64]string, len(details))
+			for _, d := range details {
+				detailMap[d.ID] = d.Detail
+			}
+
 			hits := make([]map[string]any, 0, len(acts))
 			for i := range acts {
 				var intent int64
 				if acts[i].NodeID != nil {
 					intent = *acts[i].NodeID
 				}
+				detail := detailMap[acts[i].ID]
+				matches := ExtractGrepMatches(detail, a.Q, 2, 5)
+				if len(matches) == 0 && strings.Contains(strings.ToLower(acts[i].Summary), strings.ToLower(a.Q)) {
+					matches = ExtractGrepMatches(acts[i].Summary, a.Q, 1, 3)
+				}
 				hit := map[string]any{
 					"intent_id": intent, "step_id": acts[i].ID, "worker": acts[i].Worker,
 					"kind": acts[i].Kind, "tool": acts[i].Tool, "is_error": acts[i].IsError,
 					"summary": firstLine(acts[i].Summary, 100),
+					"matches": matches,
 				}
 				if acts[i].Inherited {
 					inheritedMap(hit, acts[i].SourceTaskID)
