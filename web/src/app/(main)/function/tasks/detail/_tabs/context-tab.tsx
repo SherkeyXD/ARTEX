@@ -341,11 +341,11 @@ export function ContextTab({ taskId }: { taskId: string }) {
                       <div className="flex items-center justify-between text-[11px] text-muted-foreground font-mono">
                         <div className="flex items-center gap-3">
                           <span className="text-amber-600 dark:text-amber-400 font-semibold">
-                            {fmtChars(item.charCount)}
+                            {fmtChars(item.char_count)}
                           </span>
-                          <span>≈ {fmtTokens(item.estimatedTokens)} tok</span>
+                          <span>≈ {fmtTokens(item.estimated_tokens)} tok</span>
                         </div>
-                        <span>耗时 {fmtMs(item.durationMs)}</span>
+                        <span>耗时 {fmtMs(item.duration_ms)}</span>
                       </div>
                     </div>
                   ))}
@@ -414,8 +414,8 @@ export function ContextTab({ taskId }: { taskId: string }) {
                       ? "bg-purple-500"
                       : "bg-blue-500";
 
-                  const maxStepMs = Math.max(1000, ...filteredWaterfall.map((s) => s.durationMs));
-                  const barWidthPercent = Math.min(100, Math.max(4, (step.durationMs / maxStepMs) * 100));
+                  const maxStepMs = Math.max(1000, ...filteredWaterfall.map((s) => s.duration_ms));
+                  const barWidthPercent = Math.min(100, Math.max(4, (step.duration_ms / maxStepMs) * 100));
 
                   return (
                     <div
@@ -455,7 +455,7 @@ export function ContextTab({ taskId }: { taskId: string }) {
                             <div className={cn("h-full rounded-full transition-all", barBg)} style={{ width: `${barWidthPercent}%` }} />
                           </div>
                           <span className="w-16 text-right font-mono font-medium text-foreground">
-                            {fmtMs(step.durationMs)}
+                            {fmtMs(step.duration_ms)}
                           </span>
                         </div>
                       </div>
@@ -464,8 +464,8 @@ export function ContextTab({ taskId }: { taskId: string }) {
                         <div className="mt-2.5 border-t pt-2 text-muted-foreground text-[11px] flex flex-col gap-1">
                           <div className="flex items-center gap-4">
                             <span>时间点：{new Date(step.timestamp).toLocaleTimeString("zh-CN")}</span>
-                            <span>相对起点：+{fmtMs(step.offsetMs)}</span>
-                            {step.charCount ? <span>体量：{fmtChars(step.charCount)}</span> : null}
+                            <span>相对起点：+{fmtMs(step.offset_ms)}</span>
+                            {step.char_count ? <span>体量：{fmtChars(step.char_count)}</span> : null}
                           </div>
                           <div className="rounded bg-muted/40 p-2 font-mono text-[11px] whitespace-pre-wrap max-h-32 overflow-auto text-foreground/90">
                             {step.summary}
@@ -578,17 +578,17 @@ export function ContextTab({ taskId }: { taskId: string }) {
                       <div>
                         <span className="block text-[10px] text-muted-foreground/70">消耗 Token</span>
                         <span className="font-semibold text-foreground">
-                          {fmtTokens(agent.inputTokens + agent.outputTokens)}
+                          {fmtTokens(agent.input_tokens + agent.output_tokens)}
                         </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-muted-foreground/70">调用耗时</span>
-                        <span className="font-semibold text-foreground">{fmtMs(agent.durationMs)}</span>
+                        <span className="font-semibold text-foreground">{fmtMs(agent.duration_ms)}</span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-muted-foreground/70">步骤 / 工具</span>
                         <span className="font-semibold text-foreground">
-                          {agent.stepCount} / {agent.toolCalls}
+                          {agent.step_count} / {agent.tool_calls}
                         </span>
                       </div>
                     </div>

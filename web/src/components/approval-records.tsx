@@ -689,7 +689,7 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
         ]);
         if (id !== request.current) return;
         if (history.status === "fulfilled" && pending.status === "fulfilled") {
-          const histSig = `${history.value.total}|${history.value.items.map((x) => `${x.id}:${x.decision}:${x.status || ""}`).join(";")}`;
+          const histSig = `${history.value.total}|${history.value.items.map((x) => `${x.id}:${x.status || ""}:${x.decided_at || ""}`).join(";")}`;
           const pendSig = `${pending.value.length}|${pending.value.map((x) => x.id).join(";")}`;
           const nextSig = `${histSig}#${pendSig}`;
           if (nextSig !== sigRef.current) {

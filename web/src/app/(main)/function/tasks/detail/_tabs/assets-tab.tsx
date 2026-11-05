@@ -394,7 +394,7 @@ export function AssetsTab({ taskId }: { taskId: string }) {
           api.assetCounts(taskId),
         ]);
         if (!active || assetsRequestRef.current !== request) return;
-        const sig = `${current.total}|${current.assets.map((a) => `${a.id}:${a.tested}`).join(";")}`;
+        const sig = `${current.total}|${current.assets.map((a) => `${a.id}:${a.last_seen}`).join(";")}`;
         if (sig !== assetsSigRef.current) {
           assetsSigRef.current = sig;
           setRows(current.assets);
