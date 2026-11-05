@@ -49,11 +49,34 @@ func newNotifyFixture(t *testing.T) *notifyFixture {
 	// （防 SSRF 打到同机服务与云元数据）。测试显式打开这个开关；
 	// 守卫「默认拒绝」的行为由 notify 包的 ssrf_test.go 覆盖。
 	t.Setenv(notify.AllowLocalTargetsEnv, "1")
-	s, _, request := trafficEvidenceServer(t)
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Skipf("postgres unavailable (%v) — skipping", err)
+	}
+	t.Cleanup(func() { m.Close() })
+	td := t.TempDir()
+	s := New(context.Background(), m, td, td, td)
+	tok, err := signJWT(s.jwtKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(method, path, body string) *httptest.ResponseRecorder {
+		var r io.Reader
+		if body != "" {
+			r = strings.NewReader(body)
+		}
+		req := httptest.NewRequest(method, path, r)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		return rec
+	}
 	pg := s.m.pg
 
-	// 自建一个 task：共享装置 trafficEvidenceServer 造的 task 拿不到 exploration id，
-	// 而记录漏洞必须提供它。
+	// 自建一个 task：记录漏洞必须提供 task id 与 exploration id。
 	task, err := s.m.CreateTask("通知推送测试", "推送行为验证", nil, 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -69,12 +92,6 @@ func newNotifyFixture(t *testing.T) *notifyFixture {
 		t.Fatal(err)
 	}
 	// 让装置自成闭环：把建 fixture 之前就存在的事件一次性标记为已分派。
-	//
-	// 为什么必须做：FanOutPendingEvents 是**全局**的，会把库里所有未分派事件
-	// 展开到所有匹配渠道上。而共享装置 trafficEvidenceServer 自己就会记一条漏洞
-	// （正是它返回的那个初始 finding），其它用例也可能有残留。不隔离的话，
-	// 这些杂散事件会被分派到本用例的渠道上，让「应有 N 条投递」这类断言
-	// 时对时错——而且错法取决于用例执行顺序，比直接失败更难查。
 	if _, err := pg.Exec(`UPDATE notification_events SET fanned_out = true WHERE id <= $1 AND NOT fanned_out`, mark); err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +109,11 @@ func newNotifyFixture(t *testing.T) *notifyFixture {
 	return f
 }
 
-// record 走真实的证据写入路径落一条漏洞，返回 finding id。
+// record 走真实的漏洞写入路径落一条漏洞，返回 finding id。
 // 这条路会在**同一事务**里登记推送事件——正是本功能的挂点。
 func (f *notifyFixture) record(t *testing.T, vulnclass, severity string) int64 {
 	t.Helper()
-	out, err := f.s.evidenceStore().Record(context.Background(), db.RecordFindingInput{
+	out, err := f.s.m.pg.Exploration(f.expID).RecordFinding(context.Background(), db.RecordFindingInput{
 		TaskID:        f.taskID,
 		ExplorationID: f.expID,
 		Worker:        "test",
@@ -105,7 +122,7 @@ func (f *notifyFixture) record(t *testing.T, vulnclass, severity string) int64 {
 		Severity:      severity,
 		Summary:       vulnclass + " 的摘要",
 		Evidence:      "poc",
-	}, nil)
+	})
 	if err != nil {
 		t.Fatalf("记录漏洞失败: %v", err)
 	}

@@ -207,7 +207,6 @@ function deleteDetails(result: DeleteCounts): string[] {
   const details: string[] = [];
   if (result.assets_deleted > 0) details.push(`删除资产 ${result.assets_deleted} 条`);
   if (result.assets_detached > 0) details.push(`解除共享资产关联 ${result.assets_detached} 条`);
-  if (result.traffic_deleted > 0) details.push(`删除流量 ${result.traffic_deleted} 条`);
   if (result.files_deleted) details.push("删除任务文件");
   if (result.findings_deleted > 0) details.push(`删除漏洞 ${result.findings_deleted} 条`);
   return details;
@@ -617,7 +616,6 @@ export default function TasksPage() {
       const total: DeleteCounts = {
         assets_deleted: 0,
         assets_detached: 0,
-        traffic_deleted: 0,
         files_deleted: false,
         findings_deleted: 0,
       };
@@ -630,7 +628,6 @@ export default function TasksPage() {
           const r = await api.deleteTask(id, options);
           total.assets_deleted += r.assets_deleted;
           total.assets_detached += r.assets_detached;
-          total.traffic_deleted += r.traffic_deleted;
           total.files_deleted = total.files_deleted || r.files_deleted;
           total.findings_deleted += r.findings_deleted;
           if (r.cleanup_warning) warnings.push(`#${id}：${r.cleanup_warning}`);
@@ -2010,14 +2007,12 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
 
 const emptyDeleteOptions = (): DeleteTaskOptions => ({
   delete_assets: false,
-  delete_traffic: false,
   delete_files: false,
   delete_findings: false,
 });
 
 const deleteOptionKeys: (keyof DeleteTaskOptions)[] = [
   "delete_assets",
-  "delete_traffic",
   "delete_files",
   "delete_findings",
 ];
@@ -2051,7 +2046,6 @@ function DeleteOptionFields({
   const updateAllOptions = (checked: boolean) => {
     onOptionsChange({
       delete_assets: checked,
-      delete_traffic: checked,
       delete_files: checked,
       delete_findings: checked,
     });
@@ -2069,7 +2063,7 @@ function DeleteOptionFields({
           />
           <FieldContent>
             <FieldLabel htmlFor={`delete-all-${idPrefix}`}>全部删除</FieldLabel>
-            <FieldDescription>选中下方全部关联数据，包括资产、流量、文件、漏洞和 LLM 请求/响应记录。</FieldDescription>
+            <FieldDescription>选中下方全部关联数据，包括资产、文件和漏洞。</FieldDescription>
           </FieldContent>
         </Field>
         <Field orientation="horizontal">
@@ -2081,17 +2075,6 @@ function DeleteOptionFields({
           <FieldContent>
             <FieldLabel htmlFor={`delete-assets-${idPrefix}`}>关联资产</FieldLabel>
             <FieldDescription>删除仅属于该任务的资产；共享资产只解除当前任务关联。</FieldDescription>
-          </FieldContent>
-        </Field>
-        <Field orientation="horizontal">
-          <Checkbox
-            id={`delete-traffic-${idPrefix}`}
-            checked={options.delete_traffic}
-            onCheckedChange={(checked) => updateOption("delete_traffic", checked === true)}
-          />
-          <FieldContent>
-            <FieldLabel htmlFor={`delete-traffic-${idPrefix}`}>关联流量</FieldLabel>
-            <FieldDescription>按关联资产的精确主机名删除；仍被其他任务引用的共享主机流量会保留。</FieldDescription>
           </FieldContent>
         </Field>
         <Field orientation="horizontal">

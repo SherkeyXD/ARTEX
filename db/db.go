@@ -204,7 +204,6 @@ var builtinAgents = []builtinAgent{
 		{"FindingsSummary", "已确认漏洞摘要(可选)", "high:1 medium:2", "distilled"},
 	}, false, nil},
 	{"worker", "执行", "worker", "领取一条意图执行，把发现的事实/漏洞写回知识图谱后停止。", []promptVar{
-		{"ProxyAddr", "记录代理地址(驱动 if 双文案)", "127.0.0.1:8080", "runtime"},
 		{"WorkerName", "worker 自我标识(可选)", "worker-1", "runtime"},
 	}, false, nil},
 	// Auto:内置「平台操作」agent。不参与渗透编排循环,经对话页驱动,用工具操作平台。
@@ -253,8 +252,8 @@ ON CONFLICT (agent_id, var_name) DO UPDATE
 		_ = d.SetSetting("interactive_shell_default_v1", "true")
 	}
 	// Seed the built-in browser (Playwright) MCP once — DISABLED by default (用户
-	// 需要时自行启用), no proxy by default. The traffic-capture toggle injects/strips
-	// the recording proxy + CA at runtime (server.Manager.syncBrowserMCPProxy).
+	// 需要时自行启用), no proxy by default. Egress proxy can be synced via
+	// server.Manager.syncBrowserMCPProxy.
 	// Insert only if absent so we never clobber user edits (args/env/enabled/
 	// visibility) on restart.
 	if _, err := d.Exec(`
@@ -614,4 +613,16 @@ WHERE NOT EXISTS (SELECT 1 FROM intercept_rules WHERE name = $1)`,
 		return fmt.Errorf("rule %q: %w", name, err)
 	}
 	return d.SetSetting("intercept_default_rules_v3", "done")
+}
+
+func (d *DB) WithTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

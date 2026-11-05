@@ -49,7 +49,7 @@ const goalsDefaultTmpl = `你是渗透测试目标分解器。你的职责是从
 // WHEN an asset store + task context are available. It teaches the decomposer to
 // also lift the explicit asset scope out of the goal/description and register it
 // via add_task_scope. Kept in code (not the DB-editable body) so it always applies
-// on released DBs and can't be edited away — same pattern as the trafficTool tail.
+// on released DBs and can't be edited away.
 const goalsScopeTail = `
 
 **额外职责：登记测试资产范围**

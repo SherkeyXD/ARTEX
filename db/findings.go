@@ -10,16 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Autumn-27/artex/notify"
 )
 
 // DBFinding is a row in the standalone findings table. It persists across task
 // deletion unless the caller explicitly requests related finding cleanup.
 type DBFinding struct {
-	TrafficCount          int
-	EvidenceVersion       int64
-	ReportEvidenceVersion int64
-	TrafficBindings       []FindingTrafficBinding // populated only for export
-
 	ID              int64
 	TaskID          *int64
 	NodeID          *int64
@@ -104,8 +101,7 @@ func (d *DB) AddFinding(taskID, nodeID int64, vulnclass, name, severity, summary
 // list query selects, so scanFinding stays in sync across callers.
 const findingSelectCols = `f.id, f.task_id, f.node_id, f.vulnclass, COALESCE(f.name, ''), f.severity, f.summary,
 	       f.evidence, f.worker, f.asset_ids, COALESCE(f.status, 'pending'), f.created_at,
-	       COALESCE(t.description, '') AS task_description, f.evidence_version, f.report_evidence_version,
- (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=f.id)`
+	       COALESCE(t.description, '') AS task_description`
 
 // scanFindings materializes rows selected via findingSelectCols.
 func scanFindings(rows interface {
@@ -118,7 +114,7 @@ func scanFindings(rows interface {
 		f := &DBFinding{}
 		var aidsJSON string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
-			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt, &f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount); err != nil {
+			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt, &f.TaskDescription); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -511,7 +507,7 @@ func (d *DB) ListFindingsForExport(f FindingFilter, ids []int64) ([]*DBFinding, 
 		var aidsJSON string
 		if err := rows.Scan(&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 			&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt,
-			&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Report); err != nil {
+			&f.TaskDescription, &f.Report); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &f.AssetIDs)
@@ -639,7 +635,7 @@ func (d *DB) GetFinding(id int64) (*DBFinding, error) {
 		WHERE f.id = $1`, id).Scan(
 		&f.ID, &f.TaskID, &f.NodeID, &f.VulnClass, &f.Name, &f.Severity,
 		&f.Summary, &f.Evidence, &f.Worker, &aidsJSON, &f.Status, &f.CreatedAt,
-		&f.TaskDescription, &f.EvidenceVersion, &f.ReportEvidenceVersion, &f.TrafficCount, &f.Report)
+		&f.TaskDescription, &f.Report)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -656,26 +652,27 @@ func (d *DB) GetFinding(id int64) (*DBFinding, error) {
 // cascades its edges + node_assets and nulls any activity referencing it. Returns
 // rows affected (0 = no finding with that id).
 func (d *DB) DeleteFinding(id int64) (n int64, err error) {
-	err = d.WithEvidenceTx(context.Background(), func(tx *sql.Tx) error {
-		if err := LockFindingEvidenceTx(tx, id, nil); err != nil {
-			if errors.Is(err, ErrFindingNotFound) {
-				return nil
-			}
-			return err
+	tx, err := d.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var nodeID sql.NullInt64
+	if err := tx.QueryRow(`DELETE FROM findings WHERE id=$1 RETURNING node_id`, id).Scan(&nodeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, nil
 		}
-		var nodeID sql.NullInt64
-		if err := tx.QueryRow(`DELETE FROM findings WHERE id=$1 RETURNING node_id`, id).Scan(&nodeID); err != nil {
-			return err
+		return 0, err
+	}
+	if nodeID.Valid {
+		if _, err := tx.Exec(`DELETE FROM exploration_nodes WHERE id=$1 AND kind='finding'`, nodeID.Int64); err != nil {
+			return 0, err
 		}
-		if nodeID.Valid {
-			if _, err := tx.Exec(`DELETE FROM exploration_nodes WHERE id=$1 AND kind='finding'`, nodeID.Int64); err != nil {
-				return err
-			}
-		}
-		n = 1
-		return nil
-	})
-	return
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return 1, nil
 }
 
 // DeleteFindingsByTask removes all findings rows of a task. The originating
@@ -706,7 +703,11 @@ func (d *DB) SetFindingStatus(id int64, status string) (int64, error) {
 // whose node_id matches — report_finding returns that node id, so an agent tool
 // can address the finding it just created. Returns rows affected (0 when no row).
 func (d *DB) SetFindingReportByNodeID(nodeID int64, report string) (int64, error) {
-	return d.SetFindingReportVersionByNodeID(context.Background(), nodeID, report, nil)
+	res, err := d.Exec(`UPDATE findings SET report=$2 WHERE node_id=$1`, nodeID, report)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // setFindingCol updates one text column on the standalone finding row AND mirrors
@@ -752,8 +753,6 @@ func (d *DB) SetFindingVulnClass(id int64, vulnclass string) (int64, error) {
 // FindingMeta is the standalone-row data (id, triage state, anchored assets) the
 // per-task view grafts onto its exploration-node findings.
 type FindingMeta struct {
-	TrafficCount int
-
 	ID       int64
 	Status   string
 	AssetIDs []int64
@@ -774,7 +773,7 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 	if taskID <= 0 {
 		return out, nil
 	}
-	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids, (SELECT count(*) FROM finding_traffic_bindings b WHERE b.finding_id=findings.id) FROM findings
+	rows, err := d.Query(`SELECT node_id, id, COALESCE(status,'pending'), asset_ids FROM findings
 		WHERE task_id=$1 AND node_id IS NOT NULL`, taskID)
 	if err != nil {
 		return out, err
@@ -784,11 +783,129 @@ func (d *DB) FindingMetaByNodeID(taskID int64) (map[int64]FindingMeta, error) {
 		var nid int64
 		var m FindingMeta
 		var aidsJSON string
-		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON, &m.TrafficCount); err != nil {
+		if err := rows.Scan(&nid, &m.ID, &m.Status, &aidsJSON); err != nil {
 			return out, err
 		}
 		_ = json.Unmarshal([]byte(aidsJSON), &m.AssetIDs)
 		out[nid] = m
 	}
 	return out, rows.Err()
+}
+
+type RecordFindingInput struct {
+	TaskID, ExplorationID, IntentID                      int64
+	VulnClass, Name, Severity, Summary, Evidence, Worker string
+	AssetIDs                                             []int64
+}
+
+type RecordedFinding struct {
+	FindingID int64 `json:"finding_id,string"`
+	NodeID    int64 `json:"finding_node_id,string"`
+}
+
+func RecordFindingTx(ctx context.Context, tx *sql.Tx, in RecordFindingInput) (*RecordedFinding, error) {
+	if in.TaskID > 0 {
+		var expID int64
+		if err := tx.QueryRowContext(ctx, `SELECT exploration_id FROM tasks WHERE id=$1`, in.TaskID).Scan(&expID); err != nil {
+			return nil, err
+		}
+		if expID != in.ExplorationID {
+			return nil, errors.New("漏洞所属任务与探索记录不匹配")
+		}
+	}
+	if in.IntentID > 0 {
+		var ok bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM exploration_nodes WHERE id=$1 AND exploration_id=$2 AND kind='intent')`, in.IntentID, in.ExplorationID).Scan(&ok); err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errors.New("intent_id 必须是本任务的意图（关联任务意图只读）")
+		}
+	}
+	payload, _ := json.Marshal(map[string]any{"vulnclass": in.VulnClass, "name": in.Name, "severity": in.Severity, "summary": in.Summary, "evidence": map[string]any{"by": in.Worker, "poc": in.Evidence}})
+	out := &RecordedFinding{}
+	if err := tx.QueryRowContext(ctx, `INSERT INTO exploration_nodes(exploration_id,kind,payload,priority,state,origin)
+VALUES($1,'finding',$2,9,'confirmed',$3) RETURNING id`, in.ExplorationID, string(payload), in.Worker).Scan(&out.NodeID); err != nil {
+		return nil, err
+	}
+	for _, asset := range in.AssetIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO exploration_anchors(node_id,asset_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, out.NodeID, asset); err != nil {
+			return nil, err
+		}
+	}
+	if in.IntentID > 0 {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO exploration_edges(exploration_id,src_id,rel,dst_id) VALUES($1,$2,$3,$4)`, in.ExplorationID, in.IntentID, RelYields, out.NodeID); err != nil {
+			return nil, err
+		}
+	}
+	assets := in.AssetIDs
+	if assets == nil {
+		assets = []int64{}
+	}
+	raw, _ := json.Marshal(assets)
+	if err := tx.QueryRowContext(ctx, `INSERT INTO findings(task_id,node_id,vulnclass,name,severity,summary,evidence,worker,asset_ids)
+VALUES(NULLIF($1,0),$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`, in.TaskID, out.NodeID, in.VulnClass, in.Name, in.Severity, in.Summary, in.Evidence, in.Worker, string(raw)).Scan(&out.FindingID); err != nil {
+		return nil, err
+	}
+	RecordNotificationEventTx(ctx, tx, notify.EventFindingCreated, out.FindingID, notify.Snapshot{
+		Kind:      notify.EventFindingCreated,
+		FindingID: out.FindingID,
+		TaskID:    in.TaskID,
+		VulnClass: in.VulnClass,
+		Name:      in.Name,
+		Severity:  in.Severity,
+		Summary:   in.Summary,
+		AssetIDs:  assets,
+	})
+	return out, nil
+}
+
+func (s *ExplorationStore) RecordFinding(ctx context.Context, in RecordFindingInput) (out *RecordedFinding, err error) {
+	in.ExplorationID = s.expID
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	out, err = RecordFindingTx(ctx, tx, in)
+	if err != nil {
+		return nil, err
+	}
+	return out, tx.Commit()
+}
+
+func (d *DB) FindingIDByNodeID(nodeID int64) (id int64, err error) {
+	err = d.QueryRow(`SELECT id FROM findings WHERE node_id=$1`, nodeID).Scan(&id)
+	return
+}
+
+func (s *ExplorationStore) PopulateFindingIDs(nodes []*Node) error {
+	byID := map[int64]*Node{}
+	var args []any
+	var placeholders []string
+	for _, n := range nodes {
+		if n == nil || n.Kind != KindFinding || byID[n.ID] != nil {
+			continue
+		}
+		byID[n.ID] = n
+		args = append(args, n.ID)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT f.id, f.node_id FROM findings f WHERE f.node_id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var findingID, nodeID int64
+		if err := rows.Scan(&findingID, &nodeID); err != nil {
+			return err
+		}
+		n := byID[nodeID]
+		n.FindingID, n.FindingNodeID = findingID, nodeID
+	}
+	return rows.Err()
 }

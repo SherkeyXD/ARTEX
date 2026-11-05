@@ -10,7 +10,6 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/skill"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -19,9 +18,8 @@ import (
 // an agent's visible skills are loaded from the filesystem and packed into one
 // Skill meta-tool; its visible stdio MCP servers are spawned and expanded to
 // mcp__server__tool. skillDir is the root directory of all skill subdirectories.
-// hostTools, if set, returns runtime host tools (currently the traffic tools when
-// capture is on) to add to EVERY agent's base list — the DB tools table then
-// filters them per-agent binding. Empty/nil → no host tools this run (capture off).
+// hostTools, if set, returns runtime host tools (orchestration, platform, custom)
+// to add to EVERY agent's base list — the DB tools table then filters them per-agent binding.
 func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.CoreTool, map[string][]string)) {
 	agent.ToolAugment = func(ctx context.Context, agentKey string) ([]actool.CoreTool, agent.DeferredInfo, func()) {
 		a, err := pg.GetAgentByKey(agentKey)
@@ -144,7 +142,7 @@ func wireAgentAugment(pg *db.DB, skillDir string, hostTools func() ([]actool.Cor
 			extra = append(extra, meterSkillTool(reg.Tool(), pg, reg, a.Key, agent.RunInfoFrom(ctx)))
 		}
 
-		// host tools (traffic / orchestration / custom) — added to every agent's base;
+		// host tools (orchestration / custom) — added to every agent's base;
 		// ToolResolve then keeps them only for agents the tool is bound to. Custom
 		// tools flagged deferred contribute their names to the deferred wiring so
 		// their schema is withheld (SearchExtraTools/ExecuteExtraTool), same as MCP.
@@ -210,7 +208,6 @@ func seedPrompts(pg *db.DB) {
 // flag and, if kept, wrapped so the model sees the DB-overridden description/schema
 // and缺省入参 get injected. MCP/skill/host tools have no row and pass through.
 func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
-	agent.FindingTrafficBindingEnabled = func() bool { return pg.GetBool(settingAgentTrafficBinding, false) }
 	// Seed the built-in domain tools (first-insert only; DO NOTHING preserves edits).
 	// No startup prune: rows we didn't seed are left alone so future user-defined
 	// custom tools (system=false, added via the UI) survive restarts.
@@ -219,17 +216,6 @@ func wireTools(pg *db.DB, domainReg map[string]actool.CoreTool) {
 		agents, _ := json.Marshal(s.Agents)
 		if err := pg.SeedTool(s.Key, s.Desc, schema, agents); err != nil {
 			log.Printf("[tools] seed %s 失败: %v", s.Key, err)
-		}
-	}
-	// Seed the traffic host tools so they're bindable per-agent like built-ins.
-	// Default binding = worker (preserves prior behavior). Their runtime availability
-	// is still gated by the global capture switch (hostTools() returns them only when
-	// capture is on), so an off-capture binding simply never surfaces the tool.
-	trafficAgents, _ := json.Marshal([]string{"worker"})
-	for _, t := range traffic.SeedToolMetas() {
-		schema, _ := json.Marshal(t.InputSchema())
-		if err := pg.SeedTool(t.Name(), t.Description(), schema, trafficAgents); err != nil {
-			log.Printf("[tools] seed %s 失败: %v", t.Name(), err)
 		}
 	}
 	// bashInteractiveShellNote is appended to Bash's description ONLY for agents whose

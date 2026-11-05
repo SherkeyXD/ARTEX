@@ -44,8 +44,6 @@ import type {
   FindingStats,
   FindingStatus,
   FindingsPage,
-  FindingTraffic,
-  FindingTrafficDetail,
   IntentAsset,
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -90,11 +88,6 @@ import type {
   TokenUsage,
   Tool,
   ToolStat,
-  TrafficDetail,
-  TrafficEvidenceRef,
-  TrafficEvidenceRole,
-  TrafficHost,
-  TrafficResp,
   UpdateCheck,
   UsageStats,
   WorkspaceFile,
@@ -588,73 +581,6 @@ export const api = {
     get<Finding>(
       `/exploration/findings/${id}${contextTaskId ? `?context_task=${encodeURIComponent(contextTaskId)}` : ""}`,
     ),
-  findingTraffic: (id: string, contextTask?: string) =>
-    get<FindingTraffic>(
-      `/exploration/findings/${id}/traffic${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-    ),
-  bindFindingTraffic: (id: string, traffic_refs: TrafficEvidenceRef[], contextTask?: string) =>
-    post<FindingTraffic>(
-      `/exploration/findings/${id}/traffic${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { traffic_refs },
-    ),
-  editFindingTraffic: (
-    id: string,
-    bindingId: string,
-    version: number,
-    fields: { role: TrafficEvidenceRole; note: string },
-    contextTask?: string,
-  ) =>
-    patch<FindingTraffic>(
-      `/exploration/findings/${id}/traffic/${bindingId}${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { version, ...fields },
-    ),
-  removeFindingTraffic: (id: string, bindingId: string, version: number, contextTask?: string) =>
-    del<FindingTraffic>(
-      `/exploration/findings/${id}/traffic/${bindingId}${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { version },
-    ),
-  orderFindingTraffic: (id: string, binding_ids: string[], version: number, contextTask?: string) =>
-    http<FindingTraffic>(
-      `/exploration/findings/${id}/traffic/order${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { method: "PUT", body: JSON.stringify({ binding_ids, version }) },
-    ),
-  findingTrafficDetail: (id: string, bindingId: string, contextTask?: string) =>
-    get<FindingTrafficDetail>(
-      `/exploration/findings/${id}/traffic/${bindingId}${contextTask ? `?context_task=${encodeURIComponent(contextTask)}` : ""}`,
-    ),
-  findingTrafficBody: (
-    id: string,
-    bindingId: string,
-    side: "request" | "response",
-    offset: number,
-    contextTask?: string,
-  ) =>
-    get<EvidenceBodyPreview>(
-      `/exploration/findings/${id}/traffic/${bindingId}/body?side=${side}&offset=${offset}${contextTask ? `&context_task=${encodeURIComponent(contextTask)}` : ""}`,
-    ),
-  downloadFindingTrafficBody: async (
-    id: string,
-    bindingId: string,
-    side: "request" | "response",
-    contextTask?: string,
-  ) => {
-    const token = getToken();
-    const response = await fetch(
-      `/api/exploration/findings/${id}/traffic/${bindingId}/body?side=${side}&download=1${contextTask ? `&context_task=${encodeURIComponent(contextTask)}` : ""}`,
-      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-    );
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: "下载失败" }));
-      throw new Error(error.error ?? "下载失败");
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `evidence-${bindingId}-${side}.bin`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  },
   // 漏洞链路:该漏洞节点回溯到任务初始节点的子图(节点 + 关系)。
   findingLineage: (id: string) => get<{ nodes: TaskNode[]; edges: Edge[] }>(`/exploration/findings/${id}/lineage`),
   setFindingStatus: (id: string, status: FindingStatus) => patch<Finding>(`/exploration/findings/${id}`, { status }),
@@ -766,44 +692,8 @@ export const api = {
   newMainSession: (task: string) =>
     post<{ seq: number; created_at: string; current: number }>(`/exploration/main-session/new${tq(task)}`),
 
-  // ---- traffic / audit / report / chat ----
+  // ---- audit / report / chat ----
   audit: (task?: string) => get<Audit>(`/audit${tq(task)}`),
-  traffic: (
-    page = 0,
-    size = 100,
-    host = "",
-    method = "",
-    q = "",
-    opts: {
-      body?: string;
-      path?: string;
-      status?: string;
-      respMin?: string;
-      respMax?: string;
-      sort?: string;
-      order?: string;
-    } = {},
-  ) =>
-    get<TrafficResp>(
-      `/traffic?page=${page}&size=${size}` +
-        (host ? `&host=${encodeURIComponent(host)}` : "") +
-        (method && method !== "all" ? `&method=${encodeURIComponent(method)}` : "") +
-        (q ? `&q=${encodeURIComponent(q)}` : "") +
-        (opts.body ? `&body=${encodeURIComponent(opts.body)}` : "") +
-        (opts.path ? `&path=${encodeURIComponent(opts.path)}` : "") +
-        (opts.status && opts.status !== "all" ? `&status=${encodeURIComponent(opts.status)}` : "") +
-        (opts.respMin ? `&resp_min=${encodeURIComponent(opts.respMin)}` : "") +
-        (opts.respMax ? `&resp_max=${encodeURIComponent(opts.respMax)}` : "") +
-        (opts.sort ? `&sort=${encodeURIComponent(opts.sort)}` : "") +
-        (opts.order ? `&order=${encodeURIComponent(opts.order)}` : ""),
-    ),
-  trafficExchange: (id: string) => get<TrafficDetail>(`/traffic/exchange?id=${encodeURIComponent(id)}`),
-  trafficHosts: () => get<{ hosts: TrafficHost[] }>(`/traffic/hosts`),
-  trafficDeleteHost: (host: string) => del<{ deleted: number }>(`/traffic?host=${encodeURIComponent(host)}`),
-  trafficDeleteHosts: (hosts: string[]) => del<{ deleted: number }>(`/traffic/hosts`, { hosts }),
-  // Purges every exchange and compacts the index; `reclaimed` is the bytes of
-  // index handed back to the filesystem. Evidence bound to findings is kept.
-  trafficDeleteAll: () => del<{ deleted: number; reclaimed: number }>(`/traffic/all`),
 
   // ---- app settings (runtime toggles) ----
   settings: () => get<Settings>(`/settings`),

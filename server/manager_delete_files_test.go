@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	pgdb "github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/traffic"
 )
 
 func TestSeedAssociatesTargetAssetWithTask(t *testing.T) {
@@ -161,7 +160,7 @@ func TestStageTaskFilesRollbackReportsRestoreFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	cause := errors.New("forced PostgreSQL delete failure")
-	err = rollbackTaskDelete(cause, nil, stage)
+	err = rollbackTaskDelete(cause, stage)
 	if err == nil || !errors.Is(err, cause) || !strings.Contains(err.Error(), "destination already exists") {
 		t.Fatalf("rollback err=%v, want original and restore errors", err)
 	}
@@ -170,7 +169,7 @@ func TestStageTaskFilesRollbackReportsRestoreFailure(t *testing.T) {
 	}
 }
 
-func TestManagerDeleteTaskRestoresFilesAndTrafficWhenPostgresDeleteFails(t *testing.T) {
+func TestManagerDeleteTaskRestoresFilesWhenPostgresDeleteFails(t *testing.T) {
 	dataDir := t.TempDir()
 	m, err := NewManager(dataDir, "")
 	if err != nil {
@@ -188,7 +187,7 @@ func TestManagerDeleteTaskRestoresFilesAndTrafficWhenPostgresDeleteFails(t *test
 	cleanupDB := func() {
 		_, _ = m.pg.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON tasks`, triggerName))
 		_, _ = m.pg.Exec(fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-		_, _ = m.DeleteTask(task.ID, DeleteTaskOptions{DeleteAssets: true, DeleteTraffic: true, DeleteFiles: true})
+		_, _ = m.DeleteTask(task.ID, DeleteTaskOptions{DeleteAssets: true, DeleteFiles: true})
 	}
 	t.Cleanup(cleanupDB)
 
@@ -200,24 +199,6 @@ func TestManagerDeleteTaskRestoresFilesAndTrafficWhenPostgresDeleteFails(t *test
 	transcriptPath := filepath.Join(dataDir, "transcripts", fmt.Sprintf("exp%d-main.jsonl", task.ExpID))
 	createDeleteFixture(t, dataDir, filepath.Join("transcripts", filepath.Base(transcriptPath)), false)
 
-	tr, err := traffic.Open(filepath.Join(dataDir, "traffic"), "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m.traffic = tr
-	trafficTree := filepath.Join(dataDir, "traffic", host, "GET", "1-0001")
-	if err := os.MkdirAll(trafficTree, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	trafficMarker := filepath.Join(trafficTree, "request.http")
-	if err := os.WriteFile(trafficMarker, []byte("original traffic"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tr.DB().Exec(`INSERT INTO exchanges(id,ts,host,method,url_template,url,status,content_type,req_len,resp_len,path)
-VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "1-0001", 1, host, "GET", "/", "https://"+host+"/", 200, "text/plain", 0, 0, host+"/GET/1-0001"); err != nil {
-		t.Fatal(err)
-	}
-
 	if _, err := m.pg.Exec(fmt.Sprintf(`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $body$
 BEGIN RAISE EXCEPTION 'forced task delete failure'; END $body$`, functionName)); err != nil {
 		t.Fatal(err)
@@ -227,7 +208,7 @@ FOR EACH ROW WHEN (OLD.id = %d) EXECUTE FUNCTION %s()`, triggerName, taskID, fun
 		t.Fatal(err)
 	}
 
-	_, err = m.DeleteTask(task.ID, DeleteTaskOptions{DeleteTraffic: true, DeleteFiles: true})
+	_, err = m.DeleteTask(task.ID, DeleteTaskOptions{DeleteFiles: true})
 	if err == nil || !strings.Contains(err.Error(), "forced task delete failure") {
 		t.Fatalf("delete err=%v, want injected PostgreSQL failure", err)
 	}
@@ -236,13 +217,6 @@ FOR EACH ROW WHEN (OLD.id = %d) EXECUTE FUNCTION %s()`, triggerName, taskID, fun
 	}
 	assertPathExists(t, filepath.Join(dataDir, "tasks", task.ID))
 	assertPathExists(t, transcriptPath)
-	if got, err := os.ReadFile(trafficMarker); err != nil || string(got) != "original traffic" {
-		t.Fatalf("traffic tree was not restored: content=%q err=%v", got, err)
-	}
-	var trafficRows int
-	if err := tr.DB().QueryRow(`SELECT COUNT(*) FROM exchanges WHERE host=?`, host).Scan(&trafficRows); err != nil || trafficRows != 1 {
-		t.Fatalf("traffic index was not restored: rows=%d err=%v", trafficRows, err)
-	}
 }
 
 func createDeleteFixture(t *testing.T, root, relative string, isDir bool) {

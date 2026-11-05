@@ -15,7 +15,6 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	pgdb "github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/traffic"
 )
 
 const taskArchivePollInterval = 2 * time.Second
@@ -159,22 +158,7 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 	if snapshot.ExplorationID != task.ExplorationID {
 		return errors.New("任务探索记录在归档快照期间发生变化")
 	}
-	if s.m.traffic != nil && len(snapshot.Hosts) > 0 {
-		_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "snapshot_traffic", 38)
-		trafficCount, err := s.m.traffic.ExportHosts(snapshot.Hosts, filepath.Join(fileStage.payload, "traffic"))
-		if err != nil {
-			return err
-		}
-		snapshot.DataCounts["traffic"] = trafficCount
-	}
 	archivePath := taskArchivePath(s.m.dir, job.ID, taskID)
-	evidenceSnapshots, err := pgdb.ArchiveEvidenceSnapshots(snapshot)
-	if err != nil {
-		return err
-	}
-	if err = s.evidenceStore().CopySnapshots(s.ctx, evidenceSnapshots, filepath.Join(fileStage.payload, "evidence")); err != nil {
-		return err
-	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "compress", 50)
 	originalSize, compressedSize, checksum, err := writeTaskArchivePackage(archivePath, fileStage.payload, snapshot)
 	if err != nil {
@@ -186,32 +170,12 @@ func (s *Server) archiveTask(job *pgdb.TaskArchive) (runErr error) {
 			_ = os.Remove(archivePath)
 		}
 	}()
-	var trafficStage *traffic.HostDeleteStage
-	if s.m.traffic != nil && len(snapshot.ExclusiveHosts) > 0 {
-		_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "compact_traffic", 68)
-		trafficStage, err = s.m.traffic.StageDeleteHostsExactForArchive(snapshot.ExclusiveHosts, job.ID, job.TaskID)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if !committed {
-				runErr = errors.Join(runErr, trafficStage.Rollback())
-			}
-		}()
-	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "compact_database", 78)
 	if err := s.m.pg.CompleteTaskArchive(job.ID, snapshot, archivePath, checksum, originalSize, compressedSize); err != nil {
 		return err
 	}
 	committed = true
 	removePackage = false
-	if trafficStage != nil {
-		if err := trafficStage.Commit(); err != nil {
-			warning := "归档已完成，但独占流量热存储清理失败（归档包仍可恢复）：" + err.Error()
-			log.Printf("[task-archive] task %s: %s", taskID, warning)
-			_ = s.m.pg.AppendTaskArchiveWarning(job.ID, warning)
-		}
-	}
 	if err := fileStage.commit(); err != nil {
 		warning := "归档已完成，但暂存目录清理失败：" + err.Error()
 		log.Printf("[task-archive] task %s: %s", taskID, warning)
@@ -267,13 +231,7 @@ func (s *Server) restoreTaskArchive(job *pgdb.TaskArchive) (runErr error) {
 	if snapshot.TaskID != job.TaskID || !pgdb.IsTaskArchiveFormatSupported(snapshot.FormatVersion) {
 		return pgdb.ErrTaskArchiveFormatMismatch
 	}
-	evidenceSnapshots, err := pgdb.ArchiveEvidenceSnapshots(&snapshot)
-	if err != nil {
-		return err
-	}
-	return s.evidenceStore().WithInstalledSnapshots(s.ctx, evidenceSnapshots, filepath.Join(extracted, "evidence"), func() error {
-		return s.restoreTaskArchivePayload(job, &snapshot, extracted)
-	})
+	return s.restoreTaskArchivePayload(job, &snapshot, extracted)
 }
 
 func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb.TaskArchiveSnapshot, extracted string) (runErr error) {
@@ -295,12 +253,6 @@ func (s *Server) restoreTaskArchivePayload(job *pgdb.TaskArchive, snapshot *pgdb
 				_ = llmRecordsFile.Close()
 			}
 		}()
-	}
-	if s.m.traffic != nil {
-		_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "restore_traffic", 35)
-		if _, err := s.m.traffic.ImportArchive(filepath.Join(extracted, "traffic")); err != nil {
-			return err
-		}
 	}
 	_ = s.m.pg.UpdateTaskArchiveProgress(job.ID, "restore_files", 55)
 	files, err := installTaskArchiveFiles(s.m.dir, extracted, strconv.FormatInt(job.TaskID, 10), job.ID)

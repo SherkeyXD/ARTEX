@@ -37,10 +37,6 @@ import {
 import { api } from "@/lib/api";
 import type { Agent, Tool } from "@/lib/types";
 
-// Traffic tools are host tools gated by the global 流量捕获 switch: bindable, but
-// only usable when capture is on. Keep in sync with traffic.SeedToolMetas.
-const TRAFFIC_TOOL_KEYS = new Set(["traffic_search", "traffic_get"]);
-
 // paramRows flattens schema.properties into an ordered row list for editing.
 // name/type/required are read-only (welded to the Go handler); description/default
 // are editable. Non-scalar params (array/object) can't carry an editable default.
@@ -144,18 +140,14 @@ function applyRows(schema: Record<string, any>, rows: ParamRow[]): Record<string
 function ToolEditor({
   tool,
   agents,
-  captureOn,
   onSaved,
   onClose,
 }: {
   tool: Tool;
   agents: Agent[];
-  captureOn: boolean;
   onSaved: () => void;
   onClose: () => void;
 }) {
-  // traffic tools can't be bound/enabled until the global 流量捕获 switch is on.
-  const trafficGated = TRAFFIC_TOOL_KEYS.has(tool.key) && !captureOn;
   const [description, setDescription] = React.useState(tool.description);
   const [bound, setBound] = React.useState<string[]>(tool.agents);
   const [enabled, setEnabled] = React.useState(tool.enabled);
@@ -199,11 +191,6 @@ function ToolEditor({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4">
-        {trafficGated && (
-          <div className="border-amber-500/40 bg-amber-500/10 text-muted-foreground rounded-md border px-3 py-2 text-xs">
-            该工具依赖<b>流量捕获</b>。请先在「系统配置」开启流量捕获，才能绑定给 Agent 并启用。
-          </div>
-        )}
         {/* binding + switch */}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div className="grid gap-1.5">
@@ -213,7 +200,6 @@ function ToolEditor({
                 <label key={ag.key} className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={bound.includes(ag.key)}
-                    disabled={trafficGated}
                     onCheckedChange={() => toggleAgent(ag.key)}
                   />
                   {ag.name}
@@ -366,7 +352,6 @@ function ToolGridCard({ tool, onClick }: { tool: Tool; onClick: () => void }) {
 export default function ToolsPage() {
   const [tools, setTools] = React.useState<Tool[]>([]);
   const [agents, setAgents] = React.useState<Agent[]>([]);
-  const [captureOn, setCaptureOn] = React.useState(false);
   const [selectedKey, setSelectedKey] = React.useState<string | null>(null);
   const [customEdit, setCustomEdit] = React.useState<Tool | "new" | null>(null);
 
@@ -376,7 +361,6 @@ export default function ToolsPage() {
   React.useEffect(() => {
     reload();
     api.agents().then(setAgents).catch(() => {});
-    api.settings().then((s) => setCaptureOn(!!s.traffic_capture)).catch(() => {});
   }, [reload]);
 
   const [query, setQuery] = React.useState("");
@@ -497,7 +481,6 @@ export default function ToolsPage() {
                 key={selected.key}
                 tool={selected}
                 agents={agents}
-                captureOn={captureOn}
                 onSaved={reload}
                 onClose={() => setSelectedKey(null)}
               />
@@ -530,7 +513,6 @@ type ExecState = {
   body: string;
   timeout_ms: string;
   proxy: string;
-  use_recording_proxy: boolean;
 };
 
 function CustomToolDialog({
@@ -550,7 +532,7 @@ function CustomToolDialog({
   const [description, setDescription] = React.useState("");
   const [kind, setKind] = React.useState<"shell" | "command" | "script" | "http">("shell");
   const [ex, setEx] = React.useState<ExecState>({
-    command: "", code: "", method: "GET", url: "", headers: "", body: "", timeout_ms: "", proxy: "", use_recording_proxy: false,
+    command: "", code: "", method: "GET", url: "", headers: "", body: "", timeout_ms: "", proxy: "",
   });
   const [schemaText, setSchemaText] = React.useState("");
   const [bound, setBound] = React.useState<string[]>([]);
@@ -567,7 +549,7 @@ function CustomToolDialog({
     setParamsText(""); setTestResult(null);
     if (edit === "new") {
       setKey(""); setDescription(""); setKind("shell");
-      setEx({ command: "", code: "", method: "GET", url: "", headers: "", body: "", timeout_ms: "", proxy: "", use_recording_proxy: false });
+      setEx({ command: "", code: "", method: "GET", url: "", headers: "", body: "", timeout_ms: "", proxy: "" });
       setSchemaText(""); setBound([]); setDeferred(false); setEnabled(true);
       return;
     }
@@ -585,7 +567,6 @@ function CustomToolDialog({
       body: String(e.body ?? ""),
       timeout_ms: e.timeout_ms ? String(e.timeout_ms) : "",
       proxy: String(e.proxy ?? ""),
-      use_recording_proxy: !!e.use_recording_proxy,
     });
     setSchemaText(t.schema && Object.keys(t.schema).length ? JSON.stringify(t.schema, null, 2) : "");
     setBound(t.agents ?? []);
@@ -604,7 +585,7 @@ function CustomToolDialog({
     if (ex.headers.trim()) {
       try { headers = JSON.parse(ex.headers); } catch { /* validated on save */ }
     }
-    return { method: ex.method, url: ex.url, headers, body: ex.body, timeout_ms: t, proxy: ex.proxy, use_recording_proxy: ex.use_recording_proxy };
+    return { method: ex.method, url: ex.url, headers, body: ex.body, timeout_ms: t, proxy: ex.proxy };
   }
 
   async function save() {
@@ -745,15 +726,9 @@ function CustomToolDialog({
                 <Label className="text-xs">Body（可含 {"{param}"}）</Label>
                 <Textarea className="font-mono text-xs" rows={2} value={ex.body} onChange={(e) => setEx({ ...ex, body: e.target.value })} />
               </div>
-              <div className="flex items-center gap-4">
-                <div className="grid gap-1.5">
-                  <Label className="text-xs">代理 URL（空=直连）</Label>
-                  <Input className="font-mono text-xs w-56" value={ex.proxy} onChange={(e) => setEx({ ...ex, proxy: e.target.value })} />
-                </div>
-                <label className="mt-4 flex items-center gap-2 text-sm">
-                  <Checkbox checked={ex.use_recording_proxy} onCheckedChange={(v) => setEx({ ...ex, use_recording_proxy: !!v })} />
-                  走记录代理
-                </label>
+              <div className="grid gap-1.5">
+                <Label className="text-xs">代理 URL（空=直连）</Label>
+                <Input className="font-mono text-xs w-56" value={ex.proxy} onChange={(e) => setEx({ ...ex, proxy: e.target.value })} />
               </div>
             </div>
           )}

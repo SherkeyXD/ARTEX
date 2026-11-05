@@ -173,7 +173,7 @@ WHERE id=$1`,
 // 停用一个渠道时，把它尚未发出的投递一并标记为 skipped：否则重新启用后
 // 会突然收到一批「停用期间积压」的旧漏洞，时效已失且容易误判为新增。
 func (d *DB) SetNotificationChannelEnabled(ctx context.Context, id int64, enabled bool) error {
-	return d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
+	return d.WithTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE notification_channels SET enabled=$2 WHERE id=$1`, id, enabled)
 		if err != nil {
 			return err
@@ -462,7 +462,7 @@ func assetDisplayName(typ, domain, ip, url, appName, bundleID string) string {
 //   - 事件登记失败不影响状态更新（见 RecordNotificationEventTx 的保存点说明），
 //     所以 notified=false 时状态已经改成功了，调用方不应因此报错。
 func (d *DB) SetFindingStatusWithNotify(ctx context.Context, id int64, status string) (from string, found bool, notified bool, err error) {
-	err = d.WithEvidenceTx(ctx, func(tx *sql.Tx) error {
+	err = d.WithTx(ctx, func(tx *sql.Tx) error {
 		var txErr error
 		from, found, _, notified, txErr = SetFindingStatusTx(ctx, tx, id, status)
 		return txErr

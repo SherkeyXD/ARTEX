@@ -24,7 +24,6 @@ import (
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
 	"github.com/Autumn-27/artex/report"
-	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -215,7 +214,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			}
 			return a.TaskTimeoutWrapupMaxTurns, true
 		}
-		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 流量/编排 host 工具装配进 agent 工具集
+		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 编排/平台 host 工具装配进 agent 工具集
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
@@ -223,8 +222,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
-		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		s.seedPythonInterpreter() // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
 		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
@@ -466,7 +464,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	// chat agent serves MANY custom agents by key → it holds the GLOBAL opts
 	// (backend/key) and gates Enabled per-conversation-agent at Chat time. 对话始终用激活配置。
 	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, win) // chat page runner
-	s.chatAgent.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	s.chatAgent.SetWebSearch(s.m.WebSearchOpts())
 	s.chatAgent.SetGuard(s.chatGuard())
 	s.chatAgent.SetNonStreaming(nonStreamingResolver(cfg))
@@ -604,7 +601,6 @@ func (s *Server) chatAgentForProfile(id int64) *agent.ChatAgent {
 		return nil
 	}
 	ca := agent.NewChatAgent(s.poolForBinding(id, prov, cfg), cfg.Model, s.m.dir, cfg.CompactionWindow())
-	ca.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
 	ca.SetWebSearch(s.m.WebSearchOpts())
 	ca.SetGuard(s.chatGuard())
 	ca.SetNonStreaming(nonStreamingResolver(cfg))
@@ -750,7 +746,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/asset-tree", s.findingAssetTree)
 	mux.HandleFunc("GET /api/exploration/findings/stats", s.findingStats)
 	mux.HandleFunc("GET /api/exploration/findings/export", s.findingsExport)
-	s.registerFindingTraffic(mux)
 	mux.HandleFunc("GET /api/exploration/findings/{id}", s.getFinding)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/lineage", s.findingLineage)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/deepen", s.deepenFinding)
@@ -775,13 +770,6 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/audit", s.getAudit)
 	mux.HandleFunc("POST /api/gc", s.gc)
-	mux.HandleFunc("GET /api/traffic", s.getTraffic)
-	mux.HandleFunc("GET /api/traffic/hosts", s.getTrafficHosts)
-	mux.HandleFunc("DELETE /api/traffic", s.deleteTraffic)
-	mux.HandleFunc("DELETE /api/traffic/hosts", s.deleteTrafficHosts)
-	mux.HandleFunc("DELETE /api/traffic/all", s.deleteAllTraffic)
-	mux.HandleFunc("GET /api/traffic/exchange", s.getTrafficExchange)
-	mux.HandleFunc("GET /api/traffic/blob", s.getTrafficBlob)
 	mux.HandleFunc("GET /api/commands", s.pgListCommands)
 	mux.HandleFunc("GET /api/commands/stats", s.pgToolStats) // 按工具聚合调用次数
 	mux.HandleFunc("GET /api/llm/records/by-model", s.pgTokenByModel) // 按模型聚合本任务 token 用量
@@ -934,11 +922,6 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
 	out["engine_mode"] = "idle"              // spec enum; overridden below when a task is active
 	out["llm_configured"] = s.engine.Ready() // is an LLM provider installed at all
-	if tr := s.m.Traffic(); tr != nil {
-		c, _ := tr.Count()
-		out["traffic"] = c
-		out["traffic_enabled"] = true
-	}
 	if counts, err := s.m.Assets().CountsByType(); err == nil {
 		total := 0
 		for _, n := range counts {
@@ -2126,10 +2109,6 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(stage)
-	if err = s.evidenceStore().StageFindingsExport(r.Context(), fs, stage, format == "md-zip"); err != nil {
-		evidenceError(w, err)
-		return
-	}
 	now := time.Now()
 	stamp := now.Format("20060102-150405")
 	setDownload := func(contentType, filename string) {
@@ -2143,7 +2122,7 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(report.FindingsMarkdown(fs, now)))
 	case "md-zip":
 		path := filepath.Join(stage, "findings.zip")
-		if err := buildFindingsEvidenceZip(path, fs, stage, now); err != nil {
+		if err := buildFindingsEvidenceZip(path, fs, now); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -2162,10 +2141,6 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		assets := s.resolveFindingAssets(fs)
 		out := make([]FindingDTO, 0, len(fs))
 		for _, f := range fs {
-			for i := range f.TrafficBindings {
-				f.TrafficBindings[i].Snapshot.ReqHead = ""
-				f.TrafficBindings[i].Snapshot.RespHead = ""
-			}
 			out = append(out, findingFromDB(f, assets))
 		}
 		setDownload("application/json; charset=utf-8", "findings-"+stamp+".json")
@@ -3080,186 +3055,6 @@ func taskActivityDetail(t *Task, seq int64) (string, error) {
 	return t.Store.ActivityDetailWithSources(seq)
 }
 
-func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeJSON(w, 200, map[string]any{"enabled": false, "exchanges": []any{}})
-		return
-	}
-	q := r.URL.Query()
-	page := atoiDefault(q.Get("page"), 0)
-	size := atoiDefault(q.Get("size"), 100)
-	ex, matched, _ := tr.Page(traffic.PageQuery{
-		Host:    q.Get("host"),
-		Method:  q.Get("method"),
-		Query:   q.Get("q"),
-		Body:    q.Get("body"),
-		Path:    q.Get("path"),
-		Status:  q.Get("status"),
-		RespMin: int64(atoiDefault(q.Get("resp_min"), -1)),
-		RespMax: int64(atoiDefault(q.Get("resp_max"), -1)),
-		Sort:    q.Get("sort"),
-		Order:   q.Get("order"),
-	}, page, size)
-	count, _ := tr.Count() // global total, for the stat card
-	writeJSON(w, 200, map[string]any{
-		"enabled":   s.m.TrafficEnabled(), // reflect the capture toggle
-		"proxy":     s.m.ProxyAddr(),
-		"count":     count,   // total recorded (unfiltered)
-		"total":     matched, // rows matching the current filter (for pagination)
-		"page":      page,
-		"size":      size,
-		"exchanges": trafficDTOs(ex),
-	})
-}
-
-// getTrafficHosts returns distinct recorded hosts with counts, for the page's
-// target picker (pick a host → filter the list, then delete it).
-func (s *Server) getTrafficHosts(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeJSON(w, 200, map[string]any{"hosts": []any{}})
-		return
-	}
-	hosts, err := tr.Hosts()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"hosts": hosts})
-}
-
-// deleteTraffic removes recorded traffic for every host containing the query's
-// host substring (the page's host filter is substring-based, so what you
-// filtered is what gets deleted): index rows + each host's file tree, then
-// garbage-collects blobs no remaining exchange references. Empty host → 400.
-// Returns the number of exchanges deleted.
-func (s *Server) deleteTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	host := strings.TrimSpace(r.URL.Query().Get("host"))
-	if host == "" {
-		writeErr(w, 400, "missing host")
-		return
-	}
-	n, err := tr.DeleteHost(host)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n})
-}
-
-// deleteTrafficHosts removes traffic for a set of EXACT hosts (JSON body
-// {"hosts": [...]}) — the batch path for the page's multi-select delete. Exact
-// match, so picking "api.example.com" never sweeps "api.example.com.cn".
-// Returns the number of exchanges deleted.
-func (s *Server) deleteTrafficHosts(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	var req struct {
-		Hosts []string `json:"hosts"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "invalid body")
-		return
-	}
-	hosts := make([]string, 0, len(req.Hosts))
-	for _, h := range req.Hosts {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
-		}
-	}
-	if len(hosts) == 0 {
-		writeErr(w, 400, "missing hosts")
-		return
-	}
-	n, err := tr.DeleteHostsExact(hosts)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n})
-}
-
-// deleteAllTraffic purges every recorded exchange, then compacts the index so
-// the space is actually returned to the filesystem — an emptied index is the one
-// moment a full rewrite is cheap. Evidence already bound to a finding lives in
-// the evidence store and is deliberately left alone. Returns the number of
-// exchanges deleted and the bytes of index reclaimed.
-func (s *Server) deleteAllTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	n, reclaimed, err := tr.DeleteAll()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n, "reclaimed": reclaimed})
-}
-
-// getTrafficExchange returns the full raw request/response of one exchange,
-// read on demand from the traffic tree (bodies are not in the paged list).
-func (s *Server) getTrafficExchange(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		writeErr(w, 400, "missing id")
-		return
-	}
-	req, resp, err := tr.Get(id)
-	if err != nil {
-		writeErr(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"req": req, "resp": resp})
-}
-
-// getTrafficBlob streams one oversized body by its sha256. Bodies past the inline
-// threshold are not carried by the exchange endpoint — it returns a preview plus
-// an "@blob sha256:<hash>" pointer — so this is how the UI fetches them whole.
-// Streamed rather than buffered: these are the bodies too large to hold in memory.
-func (s *Server) getTrafficBlob(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	hash := strings.TrimSpace(r.URL.Query().Get("hash"))
-	if hash == "" {
-		writeErr(w, 400, "missing hash")
-		return
-	}
-	f, size, err := tr.Blob(hash)
-	if err != nil {
-		writeErr(w, 404, err.Error())
-		return
-	}
-	defer f.Close()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", hash+".bin"))
-	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("[traffic] 下载 blob %s 中断：%v", hash, err)
-	}
-}
-
-// getSettings returns the runtime app settings the UI toggles. The Brave API key
-// is returned as a boolean presence flag (brave_key_set), never the value itself,
-// so the UI can show "configured" without echoing the secret back.
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.settingsPayload())
 }
@@ -3272,8 +3067,6 @@ func (s *Server) settingsPayload() map[string]any {
 		concLimit = defaultConcurrencyLimit // 关闭时也回显一个合理默认值给 UI
 	}
 	return map[string]any{
-		"traffic_capture":          s.m.TrafficEnabled(),
-		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
 		"web_search_enabled":       on,
 		"web_search_backend":       backend,
 		"brave_key_set":            strings.TrimSpace(braveKey) != "",
@@ -3333,13 +3126,9 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"python_interpreter": p})
 }
 
-// putSettings applies a settings change. Toggling traffic_capture rebuilds the
-// agents (applyLLM) so the new proxy/traffic-tools/prompt state takes hold — when
-// off, agents get no proxy config, no traffic tools, and no proxy prompt content.
+// putSettings applies a settings change.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TrafficCapture      *bool `json:"traffic_capture"`
-		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -3464,19 +3253,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// Pinned tasks' planner/worker and per-profile chat agents hold providers
 		// built under the OLD switch state — drop them so they pick up the new one.
 		s.invalidateProfileAgents()
-	}
-	if req.AgentTrafficBinding != nil {
-		if err := s.m.pg.SetBool(settingAgentTrafficBinding, *req.AgentTrafficBinding); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.TrafficCapture != nil {
-		if err := s.m.SetTrafficEnabled(*req.TrafficCapture); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-		changed = true
 	}
 	if req.GlobalProxy != nil {
 		// Validation failure (bad scheme/host) is a client error, not a 500.

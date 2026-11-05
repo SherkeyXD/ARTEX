@@ -60,11 +60,9 @@ type TaskDeleteResult struct {
 }
 
 // TaskDeletePreparation is produced inside the PostgreSQL deletion transaction
-// after asset and anchor writers have been excluded. Prepare callbacks may use
-// TrafficHosts to stage an external traffic deletion before PostgreSQL commits.
+// after asset and anchor writers have been excluded.
 type TaskDeletePreparation struct {
 	ExplorationID int64
-	TrafficHosts  []string
 }
 
 // IsTerminal reports whether a task status is a terminal (finished) state.
@@ -537,8 +535,7 @@ func (d *DB) DeleteTaskCascade(id int64, deleteAssets, deleteFindings bool) (Tas
 // DeleteTaskCascadePrepared coordinates reversible external deletion with the
 // PostgreSQL cascade. When prepare is non-nil, host ownership is resolved and
 // prepare is invoked inside this transaction while asset and anchor writers are
-// excluded. The locks remain held through commit, closing the window where a
-// host could become shared after its traffic had already been staged.
+// excluded. The locks remain held through commit.
 //
 // prepare must only stage reversible work. Any returned error or later database
 // error rolls PostgreSQL back; the caller remains responsible for rolling back
@@ -572,13 +569,8 @@ func (d *DB) DeleteTaskCascadePrepared(
 		}
 	}
 	if prepare != nil {
-		hosts, err := hostsForTaskDeletion(tx, id, expID)
-		if err != nil {
-			return result, err
-		}
 		if err := prepare(TaskDeletePreparation{
 			ExplorationID: expID,
-			TrafficHosts:  hosts,
 		}); err != nil {
 			return result, err
 		}

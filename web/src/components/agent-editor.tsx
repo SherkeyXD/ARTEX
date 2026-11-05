@@ -28,10 +28,6 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Agent, AgentDetail, AgentTrigger, MCPServer, PromptVar, PromptVersion, Settings, SkillItem, Tool } from "@/lib/types";
 
-// Traffic tools are host tools gated by the global 流量捕获 switch: bindable, but
-// only usable when capture is on. Keep this list in sync with traffic.SeedToolMetas.
-const TRAFFIC_TOOL_KEYS = new Set(["traffic_search", "traffic_get"]);
-
 // AgentEditor is the tabbed editor for one agent, used inside the agents-page
 // drawer (and reused full-page for deep links). Tabs: 配置与提示词 / MCP / Skill /
 // Tools. Config + prompt save as before; visibility + tool bindings toggle live.
@@ -75,8 +71,7 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
     api.tools().then(setTools).catch(() => {});
     api.settings().then(setSettings).catch(() => {});
   }, []);
-  // global gates: traffic tools need 流量捕获, web search needs the master switch.
-  const captureOn = !!settings?.traffic_capture;
+  // global gates: web search needs the master switch.
   const webSearchGlobalOn = !!settings?.web_search_enabled;
 
   const reload = React.useCallback(() => {
@@ -624,41 +619,26 @@ export function AgentEditor({ agentKey, onSaved }: { agentKey: string; onSaved?:
       <TabsContent value="tools" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <p className="text-muted-foreground mb-3 text-xs">勾选绑定给此 Agent 的内置工具。</p>
         <div className="grid gap-2">
-          {tools.map((t) => {
-            const isTraffic = TRAFFIC_TOOL_KEYS.has(t.key);
-            const gated = isTraffic && !captureOn; // traffic tools need 流量捕获 on
-            return (
-              <label
-                key={t.key}
-                className={cn(
-                  "flex items-center gap-2 rounded-md border p-2 text-sm",
-                  gated && "opacity-60",
-                )}
-              >
-                <Checkbox
-                  checked={t.agents.includes(agentKey)}
-                  disabled={gated}
-                  onCheckedChange={() => toggleTool(t)}
-                />
-                <span className="font-mono text-xs">{t.key}</span>
-                {isTraffic && (
-                  <Badge variant="secondary" className="px-1 py-0 text-[9px]">流量</Badge>
-                )}
-                {!t.enabled && (
-                  <Badge variant="outline" className="text-destructive px-1 py-0 text-[9px]">已停用</Badge>
-                )}
-                {gated ? (
-                  <span className="text-muted-foreground ml-auto text-xs">需开启流量捕获</span>
-                ) : (
-                  t.description && (
-                    <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">
-                      {t.description}
-                    </span>
-                  )
-                )}
-              </label>
-            );
-          })}
+          {tools.map((t) => (
+            <label
+              key={t.key}
+              className="flex items-center gap-2 rounded-md border p-2 text-sm"
+            >
+              <Checkbox
+                checked={t.agents.includes(agentKey)}
+                onCheckedChange={() => toggleTool(t)}
+              />
+              <span className="font-mono text-xs">{t.key}</span>
+              {!t.enabled && (
+                <Badge variant="outline" className="text-destructive px-1 py-0 text-[9px]">已停用</Badge>
+              )}
+              {t.description && (
+                <span className="text-muted-foreground ml-auto line-clamp-1 max-w-[55%] text-xs">
+                  {t.description}
+                </span>
+              )}
+            </label>
+          ))}
           {tools.length === 0 && <span className="text-muted-foreground text-xs">（暂无工具）</span>}
         </div>
       </TabsContent>

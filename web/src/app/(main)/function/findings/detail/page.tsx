@@ -10,7 +10,6 @@ import { toast } from "sonner";
 
 import { CopyButton } from "@/components/copy-button";
 import { FindingRetestPanel } from "@/components/finding-retest-panel";
-import { FindingTrafficPanel } from "@/components/finding-traffic-panel";
 import { Markdown } from "@/components/markdown";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -187,13 +186,6 @@ function FindingDetailInner() {
                   )}
                 </CardContent>
               </Card>
-              <FindingTrafficPanel
-                key={id}
-                findingId={id}
-                contextTask={contextTaskId || undefined}
-                readOnly={finding.inherited}
-                onChanged={load}
-              />
               {/* 证据下方：详细报告(Markdown 渲染) */}
               <Card>
                 <CardHeader className="flex-row items-center justify-between">
@@ -201,11 +193,6 @@ function FindingDetailInner() {
                   {finding.report && <CopyButton text={finding.report} successMessage="已复制详细报告" />}
                 </CardHeader>
                 <CardContent>
-                  {finding.report_stale ? (
-                    <Alert>
-                      <AlertDescription>流量证据已变更，详细报告待更新。</AlertDescription>
-                    </Alert>
-                  ) : null}
                   {finding.report ? (
                     <Markdown text={finding.report} />
                   ) : (

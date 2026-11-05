@@ -62,7 +62,6 @@ export interface TaskTemplate {
 
 export interface DeleteTaskOptions {
   delete_assets: boolean;
-  delete_traffic: boolean;
   delete_files: boolean;
   delete_findings: boolean;
 }
@@ -71,7 +70,6 @@ export interface DeleteTaskResult {
   deleted: string;
   assets_deleted: number;
   assets_detached: number;
-  traffic_deleted: number;
   files_deleted: boolean;
   findings_deleted: number;
   cleanup_warning?: string;
@@ -487,10 +485,6 @@ export interface FindingAsset {
 }
 
 export interface Finding {
-  traffic_count?: number;
-  evidence_version?: number;
-  report_evidence_version?: number;
-  report_stale?: boolean;
   id: string;
   finding_id?: string; // 独立 findings 表的行 id,状态更新的句柄(任务内旧节点可能缺失)
   vulnclass: string;
@@ -871,44 +865,8 @@ export interface Audit {
   attributions?: Record<string, number>;
 }
 
-// ---- Traffic ----
-export interface TrafficExchange {
-  id: string;
-  ts: string;
-  host: string;
-  method: string;
-  url: string;
-  status: number;
-  content_type: string;
-  resp_len: number;
-}
-
-export interface TrafficResp {
-  enabled: boolean;
-  proxy?: string;
-  count?: number; // global total (unfiltered)
-  total?: number; // rows matching the current filter (for pagination)
-  page?: number;
-  size?: number;
-  exchanges?: TrafficExchange[];
-}
-
-// Full raw request/response of one exchange (lazy-loaded on row select).
-export interface TrafficDetail {
-  req: string;
-  resp: string;
-}
-
-// One distinct recorded host with its exchange count (target picker).
-export interface TrafficHost {
-  host: string;
-  count: number;
-}
-
 // ---- App settings (runtime toggles) ----
 export interface Settings {
-  traffic_capture: boolean;
-  agent_traffic_binding: boolean; // Agent 自动绑定流量证据，默认关闭；不影响人工绑定
   // Web search. brave_key_set / tavily_key_set reflect whether a key is stored
   // (the values are never returned). On PUT, send the corresponding field to set/clear.
   web_search_enabled: boolean;
@@ -1449,57 +1407,6 @@ export interface InterceptAudit {
 }
 export interface InterceptDetail extends InterceptApprovalRow {
   audit: InterceptAudit | null;
-}
-
-export type TrafficEvidenceRole = "baseline" | "proof" | "verification" | "supporting";
-export interface TrafficEvidenceRef {
-  traffic_id: string;
-  role?: TrafficEvidenceRole;
-  note?: string;
-}
-export interface TrafficEvidenceSnapshot {
-  id: string;
-  source_traffic_id: string;
-  captured_at: number;
-  url: string;
-  method: string;
-  status: number;
-  content_type: string;
-  req_head?: string;
-  resp_head?: string;
-  req_hash: string;
-  resp_hash: string;
-  req_len: number;
-  resp_len: number;
-}
-export interface FindingTrafficBinding {
-  id: string;
-  finding_id: string;
-  snapshot_id: string;
-  role: TrafficEvidenceRole;
-  note: string;
-  position: number;
-  created_at: string;
-  snapshot: TrafficEvidenceSnapshot;
-}
-export interface FindingTraffic {
-  finding_id: string;
-  version: number;
-  report_version: number;
-  bindings: FindingTrafficBinding[];
-}
-export interface EvidenceBodyPreview {
-  content: string;
-  offset: number;
-  total: number;
-  next_offset: number;
-  truncated: boolean;
-  binary: boolean;
-}
-export interface FindingTrafficDetail {
-  binding: FindingTrafficBinding;
-  request: EvidenceBodyPreview;
-  response: EvidenceBodyPreview;
 }
 
 /** GET /api/update/check —— 当前版本与 GitHub 最新正式版的比较结果。 */

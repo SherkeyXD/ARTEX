@@ -67,7 +67,6 @@ func jsonbClean(b []byte) []byte {
 type Node struct {
 	FindingID     int64           `json:"finding_id,omitempty"` // populated by finding-aware reads; never inferred from ID
 	FindingNodeID int64           `json:"finding_node_id,omitempty"`
-	TrafficCount  int             `json:"traffic_count,omitempty"`
 	ID            int64           `json:"id"`
 	Kind          string          `json:"kind"`
 	Payload       json.RawMessage `json:"payload"`
@@ -411,7 +410,7 @@ WHERE id=$2 AND exploration_id=$3 AND kind='intent' AND state=$4`, state, id, s.
 }
 
 // IntentCleanup summarizes the blackboard records removed when a user cancels
-// one worker intent. Global assets and traffic are deliberately not part of this
+// one worker intent. Global assets are deliberately not part of this
 // operation; exploration anchors disappear only because their owning nodes do.
 type IntentCleanup struct {
 	Intents    int64 `json:"intents"`

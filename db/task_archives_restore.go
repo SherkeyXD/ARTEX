@@ -135,7 +135,7 @@ WHERE id=$1`, archiveID, ArchiveReady, archivePath, sha256, originalSize, compre
 }
 
 // RestoreTaskArchive restores PostgreSQL rows from a verified manifest. It is
-// idempotent for accounting/traffic retry scenarios and returns non-fatal
+// idempotent for retry scenarios and returns non-fatal
 // warnings for global objects that intentionally are not recreated.
 func (d *DB) RestoreTaskArchive(archiveID int64, snapshot *TaskArchiveSnapshot, remainingTimeoutSeconds int64) ([]string, error) {
 	return d.restoreTaskArchive(archiveID, snapshot, remainingTimeoutSeconds, nil)
@@ -233,10 +233,6 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 	if err != nil {
 		return nil, err
 	}
-	remappedTables["findings"], err = normalizeArchivedFindingVersions(remappedTables["findings"])
-	if err != nil {
-		return nil, err
-	}
 	// Insert graph rows in foreign-key order. The archived stub has no graph rows,
 	// so an ID conflict signals external corruption and must stop the restore.
 	for _, table := range []string{"exploration_nodes", "exploration_edges", "exploration_anchors", "task_constraints", "activity"} {
@@ -268,9 +264,6 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
 			return nil, fmt.Errorf("restore %s: %w", table, err)
 		}
-	}
-	if err := restoreFindingTrafficTx(tx, snapshot); err != nil {
-		return nil, fmt.Errorf("restore finding traffic: %w", err)
 	}
 	if streamedLLMRecords != "" && llmRecords != nil {
 		_, _ = io.Copy(io.Discard, llmRecords)

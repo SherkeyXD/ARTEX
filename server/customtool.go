@@ -3,8 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -224,13 +222,12 @@ type scriptExec struct {
 	TimeoutMs int    `json:"timeout_ms"`
 }
 type httpExec struct {
-	Method            string            `json:"method"`
-	URL               string            `json:"url"`
-	Headers           map[string]string `json:"headers"`
-	Body              string            `json:"body"`
-	TimeoutMs         int               `json:"timeout_ms"`
-	Proxy             string            `json:"proxy"`
-	UseRecordingProxy bool              `json:"use_recording_proxy"`
+	Method    string            `json:"method"`
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers"`
+	Body      string            `json:"body"`
+	TimeoutMs int               `json:"timeout_ms"`
+	Proxy     string            `json:"proxy"`
 }
 
 func timeoutOr(ms, def int) time.Duration {
@@ -456,16 +453,11 @@ func (s *Server) runHTTPTool(ctx context.Context, execRaw json.RawMessage, param
 	return actool.Text(actool.Capture(tc, string(b))), nil
 }
 
-// httpProxyTransport builds a Transport for the http tool's proxy config, or nil
-// (direct). use_recording_proxy routes through the recording proxy + trusts its CA.
+// httpProxyTransport builds a Transport for the http tool's proxy config, or nil (direct).
 func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 	proxyStr := strings.TrimSpace(spec.Proxy)
-	var caFile string
-	if spec.UseRecordingProxy {
-		if addr := s.m.ProxyAddr(); addr != "" {
-			proxyStr = "http://" + addr
-			caFile = s.m.ProxyCACert()
-		}
+	if proxyStr == "" {
+		proxyStr = s.m.GlobalProxy()
 	}
 	if proxyStr == "" {
 		return nil
@@ -474,16 +466,7 @@ func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 	if err != nil {
 		return nil
 	}
-	tr := &http.Transport{Proxy: http.ProxyURL(pu)}
-	if caFile != "" {
-		if pem, err := os.ReadFile(caFile); err == nil {
-			pool := x509.NewCertPool()
-			if pool.AppendCertsFromPEM(pem) {
-				tr.TLSClientConfig = &tls.Config{RootCAs: pool}
-			}
-		}
-	}
-	return tr
+	return &http.Transport{Proxy: http.ProxyURL(pu)}
 }
 
 // ---------- helpers ----------

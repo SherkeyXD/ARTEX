@@ -29,9 +29,8 @@ import (
 // Backend is "ddgs" (no key), "brave-free" (BraveKey required), "tavily"
 // (TavilyKey required), or "deepseek" (DeepSeek* required, filled from the
 // active LLM profile). It maps directly onto agentcore.Options.
-// Proxy is a dedicated egress proxy for the search request (http/https/socks5),
-// independent of the traffic-recording MITM proxy — set it when the search endpoint
-// is only reachable via a VPN/SOCKS proxy. Empty = direct.
+// Proxy is a dedicated egress proxy for the search request (http/https/socks5) —
+// set it when the search endpoint is only reachable via a VPN/SOCKS proxy. Empty = direct.
 //
 // 注意 deepseek 后端与其它三个的性质不同：DeepSeek 没有可直接调用的搜索接口，
 // 搜索只存在于其 Anthropic 兼容 messages 接口内部(web_search_20250305 server
@@ -51,12 +50,9 @@ type WebSearchOpts struct {
 }
 
 type Worker struct {
-	findingRecorder FindingRecorder
 	prov            llm.Provider
 	model           string
 	workDir         string
-	proxyAddr       string
-	proxyCACert     string            // recording proxy's CA cert path (for WebFetch HTTPS verify)
 	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
 	window          int               // context window in tokens (for compaction)
 	windowFn        func() int        // optional dynamic task-chain minimum
@@ -65,7 +61,7 @@ type Worker struct {
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.
 	runTimeout time.Duration
-	// extraTools are host-provided tools (e.g. traffic query, oast) appended to
+	// extraTools are host-provided tools (e.g. oast, custom tools) appended to
 	// the worker's graph write-back tools.
 	extraTools []actool.CoreTool
 	// injectConstraints resolves whether this task's operation constraints get
@@ -172,50 +168,12 @@ func (w *Worker) compactionWindow() int {
 	return w.window
 }
 
-// SetProxy configures the recording proxy address that workers route target
-// traffic through, plus the CA cert path WebFetch trusts to verify HTTPS through
-// that MITM proxy. Empty addr disables the hint.
-func (w *Worker) SetProxy(addr, caCert string) { w.proxyAddr, w.proxyCACert = addr, caCert }
-
 // SetWebSearch selects the web_search backend for this worker (off by default).
 func (w *Worker) SetWebSearch(o WebSearchOpts) { w.webSearch = o }
 
-// proxyEnv builds the Bash-subprocess env that routes child-command HTTP through
-// the egress proxy (the recording MITM when capture is on, or the global proxy
-// directly when it is off) and, only when a MITM CA is present, makes the common
-// toolchain trust it — so tools need no manual -x/--proxy/-k. Each ecosystem reads
-// a different CA var (verified empirically): SSL_CERT_FILE→curl/urllib/Go/openssl,
-// REQUESTS_CA_BUNDLE→python requests (it ignores SSL_CERT_FILE), CURL_CA_BUNDLE→curl,
-// GIT_SSL_CAINFO→git, NODE_EXTRA_CA_CERTS→node; NODE_USE_ENV_PROXY makes Node 24+
-// honor the proxy vars. ALL_PROXY is set too so a socks5 egress proxy (which curl
-// only reads from ALL_PROXY, not HTTP(S)_PROXY) works in the capture-off path.
-// Empty proxyAddr → nil (direct, unchanged env).
-func proxyEnv(proxyAddr, caCert string) []string {
-	if proxyAddr == "" {
-		return nil
-	}
-	env := []string{
-		"HTTP_PROXY=" + proxyAddr, "HTTPS_PROXY=" + proxyAddr,
-		"http_proxy=" + proxyAddr, "https_proxy=" + proxyAddr,
-		"ALL_PROXY=" + proxyAddr, "all_proxy=" + proxyAddr, // socks5 egress: curl reads only this
-		"NODE_USE_ENV_PROXY=1", // Node 24+: honor HTTP(S)_PROXY in built-in fetch/http
-	}
-	if caCert != "" {
-		env = append(env,
-			"SSL_CERT_FILE="+caCert,
-			"CURL_CA_BUNDLE="+caCert,
-			"REQUESTS_CA_BUNDLE="+caCert,
-			"GIT_SSL_CAINFO="+caCert,
-			"NODE_EXTRA_CA_CERTS="+caCert,
-		)
-	}
-	return env
-}
-
-// workerDefaultTmpl is the built-in EDITABLE body (段 [A]) of the worker system
-// prompt, seeded into agent_prompts. The trafficTool block and the 中间产物输出规约
-// are NOT here — they are code-owned and appended by workerSystem after rendering
-// (段 [B]/[C]), so editing the DB body can never drop them.
+// workerDefaultTmpl is the built-in EDITABLE body of the worker system
+// prompt, seeded into agent_prompts. The 中间产物输出规约 is code-owned and
+// appended by workerSystem after rendering, so editing the DB body can never drop it.
 const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系统的"执行者"(work agent)。你领到【一条意图】(一句话探索方向)，唯一职责：**完成这一条意图、把发现写回知识图谱、然后停止返回。**
 
 **边界（红线）**：
@@ -231,19 +189,7 @@ const workerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 完成本意图后用一句话总结你做了什么、写回了哪些事实。`
 
-// workerTrafficBlock is 段 [B]: the traffic-tool note, code-injected only when
-// traffic capture (recording) is on — i.e. the traffic_* tools actually exist.
-// Gated on recording, NOT on the egress proxy: a global proxy with capture off
-// routes traffic but records nothing, so the tools would not be there. Not stored,
-// not editable.
-func workerTrafficBlock(recording bool) string {
-	if !recording {
-		return ""
-	}
-	return "\n\n**流量工具**：\n- traffic_search / traffic_get / traffic_blob：回看响应、找已访问过的资源，**先查流量、不要重复 curl 同一 URL**。traffic_search **必须指定 host**、默认只回 3 条极轻量索引(id/method/url/status/resp_len，无响应内容)，需要更多显式调大 limit；可用 body_contains 在请求/响应正文里做全文搜索(至少 3 字符，支持子串和中文，如找密码/密钥/报错/内网地址)；要看某条原文用 traffic_get(id)，其中超大正文显示为 @blob sha256:<hash>，用 traffic_blob(hash) 分段取全文。"
-}
-
-// artifactSpec is 段 [C]: the code-owned, non-editable tail appended to every
+// artifactSpec is the code-owned, non-editable tail appended to every
 // pentest agent's prompt — intermediate artifacts must land in the shared work
 // dir, never /tmp. Guaranteed present regardless of how the DB body is edited.
 func artifactSpec(dir string) string {
@@ -275,12 +221,9 @@ func ensureRunDir(base string, taskID, intentID int64) string {
 // cmdOutDir is the SDK large-tool-output spill dir under an agent's run dir.
 func cmdOutDir(dir string) string { return filepath.Join(dir, "cmd-output") }
 
-func workerSystem(proxyAddr, caCert, dataDir string) string {
-	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{ProxyAddr: proxyAddr, DataDir: dataDir, Now: nowDateStr()})
-	// caCert is present only when the recording MITM is on, which is exactly when
-	// the traffic_* tools are registered — so it gates the traffic-tool note.
-	// Optional finding guidance is added for every role after tool resolution.
-	return body + workerTrafficBlock(caCert != "") + workerArtifactSpec()
+func workerSystem(dataDir string) string {
+	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{DataDir: dataDir, Now: nowDateStr()})
+	return body + workerArtifactSpec()
 }
 
 // renderIntentTask formats the claimed intent for the worker's launch USER message:
@@ -382,7 +325,6 @@ func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int
 
 func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
 	tsx := NewToolSet(ts, name)
-	tsx.SetFindingRecorder(w.findingRecorder)
 	tsx.SetTaskID(taskID)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
 	tsx.SetCoverageEnabled(coverageEnabled)
@@ -391,7 +333,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	}
 	tsx.SetOwnerNode(intent.ID)         // assets this worker discovers anchor to its intent → visible to the task
 	tsx.SetNotifyFinding(notifyFinding) // report_finding 落库时当场唤醒 planner，带上「哪个意图+finding」
-	// base = built-in worker tools ∪ host tools (traffic) ∪ default tools (incl. Bash);
+	// base = built-in worker tools ∪ extra tools ∪ default tools (incl. Bash);
 	// then augment with the agent's visible skills/MCP. During the SDK settlement
 	// phase, Bash is hidden via Settlement.DisabledTools (no local gating needed).
 	base := append(tsx.WorkerTools(), w.extraTools...)
@@ -404,7 +346,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 
 	// 意图是 worker 的唯一职责，但为了最大化大模型的 Prefix Cache 命中率，
 	// 意图详情、目标资产与启动指令均放入首轮 USER 消息（renderWorkerLaunchInput）。
-	// System Prompt 只保留静态角色定义、流量工具提示、输出规约与操作约束，
+	// System Prompt 只保留静态角色定义、输出规约与操作约束，
 	// 确保同一任务乃至跨任务的 worker system prompt 完全字节级一致。
 	// 本次意图的专属工作目录 <workDir>/tasks/<taskID>/i<intentID>，引擎侧先建好。
 	runDir := ensureRunDir(w.workDir, taskID, intent.ID)
@@ -412,7 +354,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// inherit a parent run's background into the action reviewer.
 	ctx = intercept.WithReviewContext(ctx, runDir, intercept.ReviewBackground{})
 	overview := renderWorkerGraphOverview(tsx.graphOverviewData())
-	sysBody := workerSystem(w.proxyAddr, w.proxyCACert, w.workDir)
+	sysBody := workerSystem(w.workDir)
 	if w.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,worker 执行时严格遵守
 	}
@@ -452,13 +394,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		DeferredTools:   def.Deferred,
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
-		// WebFetch 走记录代理，其 HTTP 与 curl 一样被留痕；载入代理 CA 让经 MITM
-		// 重签的 HTTPS 证书能【正常校验通过】（而非关掉校验）。proxy 空则直连。
-		EnableWebFetch: true,
-		WebFetchProxy:  w.proxyAddr,
-		WebFetchCACert: w.proxyCACert,
+		EnableWebFetch:  true,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立的出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
 		EnableWebSearch:       w.webSearch.Enabled,
 		WebSearchBackend:      w.webSearch.Backend,
 		BraveSearchAPIKey:     w.webSearch.BraveKey,
@@ -467,10 +404,8 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		DeepSeekSearchAPIKey:  w.webSearch.DeepSeekAPIKey,
 		DeepSeekSearchModel:   w.webSearch.DeepSeekModel,
 		WebSearchProxy:        w.webSearch.Proxy,
-		// Bash 子命令的 HTTP 默认走记录代理 + 信任其 CA（工具无需 -x/-k）。
-		BashEnv:    proxyEnv(w.proxyAddr, w.proxyCACert),
-		WorkingDir: runDir,
-		MaxTurns:   w.maxTurns, // 0 = unlimited (configurable in agent management)
+		WorkingDir:            runDir,
+		MaxTurns:              w.maxTurns, // 0 = unlimited (configurable in agent management)
 		// 墙钟预算,轮边界判,不打断半路;0 = 不限。有任务级 deadline 时夹逼到 min(自身预算,
 		// 距 deadline 剩余),让本 run 在任务到点时自然进收尾(见 taskclock.go)。
 		MaxDuration: maxDur,
