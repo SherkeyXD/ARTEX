@@ -359,7 +359,8 @@ func renderWorkerGraphOverview(data map[string]any) string {
 	// 那条意图、别追未覆盖的点」的职责边界相悖 → 从 worker 视图里剔除。data 是本次 worker
 	// 专属的新 map，删键不影响 planner。
 	delete(data, "coverage")
-	b, err := json.Marshal(data)
+	distilled := distillOverviewForPrompt(data)
+	b, err := json.Marshal(distilled)
 	if err != nil {
 		return "" // fall back silently: the worker just won't have the global context
 	}

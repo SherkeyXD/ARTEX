@@ -205,8 +205,8 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 			b.WriteString(fmt.Sprintf("\n- 意图 #%d 由用户删除，意图内容是：%s、删除原因是：%s。该意图已删除（不再执行）；请据此重新规划。", ev.IntentID, sm, ev.Detail))
 		default: // "done"
 			b.WriteString(fmt.Sprintf("\n- 意图 #%d（%s）的 worker 结束，输出结论：%s", ev.IntentID, intentSummary(ts, ev.IntentID), workerOutput(ts, ev.IntentID)))
-			if fids := factIDsYielded(ts, ev.IntentID); fids != "" {
-				b.WriteString(fmt.Sprintf("；本意图新产生的事实 id：%s ", fids))
+			if fids := factsYieldedSummary(ts, ev.IntentID); fids != "" {
+				b.WriteString(fmt.Sprintf("；本意图新产生的事实：%s ", fids))
 			}
 		}
 	}
@@ -214,19 +214,36 @@ func renderTriggers(ts *db.ExplorationStore, evs []TriggerEvent) string {
 	return b.String()
 }
 
-// factIDsYielded lists the fact ids an intent produced this run as "#12、#15", so the
-// planner can jump straight to the round's incremental facts. Empty (best-effort) when
-// the intent yielded no facts or the lookup fails.
-func factIDsYielded(ts *db.ExplorationStore, id int64) string {
+// factsYieldedSummary lists the facts an intent produced this run as "#12(summary)、#15(summary)",
+// providing the planner with immediate incremental context without requiring a separate tool call.
+func factsYieldedSummary(ts *db.ExplorationStore, id int64) string {
 	ids, err := ts.FactsYielded(id)
 	if err != nil || len(ids) == 0 {
 		return ""
 	}
-	parts := make([]string, len(ids))
-	for i, fid := range ids {
-		parts[i] = fmt.Sprintf("#%d", fid)
+	parts := make([]string, 0, len(ids))
+	for _, fid := range ids {
+		if sm := factSummary(ts, fid); sm != "" {
+			parts = append(parts, fmt.Sprintf("#%d(%s)", fid, sm))
+		} else {
+			parts = append(parts, fmt.Sprintf("#%d", fid))
+		}
 	}
 	return strings.Join(parts, "、")
+}
+
+func factSummary(ts *db.ExplorationStore, id int64) string {
+	n, err := ts.GetNode(id)
+	if err != nil || n == nil {
+		return ""
+	}
+	var p map[string]any
+	if json.Unmarshal(n.Payload, &p) == nil {
+		if s, ok := p["summary"].(string); ok && s != "" {
+			return truncOutput(s, 60)
+		}
+	}
+	return ""
 }
 
 // intentSummary reads an intent node's one-line summary (best-effort, "?" on miss).
@@ -279,17 +296,104 @@ func truncOutput(s string, n int) string {
 	return string(r[:n]) + " …（已截断，完整见 get_worker_output）"
 }
 
-// renderGraphOverview folds the pre-computed graph_overview snapshot into the
-// wake-up prompt so the planner starts each round with the full situation in
-// hand — saving the round-trip it would otherwise spend calling the tool. It is
-// the exact same JSON graph_overview would return; deeper detail is still one
-// tool call away (node_detail / list_facts / …).
+// distillOverviewForPrompt produces a token-efficient, condensed view of graph_overview
+// for agent prompts. It removes verbose cold-digest bodies, truncates long historical
+// lists, and replaces multi-thousand-rune inherited blackboard blobs with lightweight
+// counters and titles, while preserving all active goals, coverage metrics, and active intents.
+func distillOverviewForPrompt(data map[string]any) map[string]any {
+	if data == nil {
+		return nil
+	}
+	out := make(map[string]any, len(data))
+	for k, v := range data {
+		out[k] = v
+	}
+
+	// 1. cold_digests: 剔除动辄几千字符的 digest body 全文，只保留 id、member_count 以及超短摘要。
+	if raw, ok := out["cold_digests"]; ok && raw != nil {
+		if cds, ok := raw.([]map[string]any); ok && len(cds) > 0 {
+			slimDigests := make([]map[string]any, 0, len(cds))
+			for _, cd := range cds {
+				m := map[string]any{
+					"id":           cd["id"],
+					"member_count": cd["member_count"],
+				}
+				if b, ok := cd["body"].(string); ok && b != "" {
+					m["summary"] = truncOutput(b, 80)
+				}
+				slimDigests = append(slimDigests, m)
+			}
+			out["cold_digests"] = slimDigests
+			out["cold_digests_hint"] = "冷区详细内容请调用 expand_digest(id) 展开"
+		}
+	}
+
+	// 2. related_tasks: 关联任务黑板信息往往包含数万字符，在概览提示词中只保留任务标题和概要计数。
+	if raw, ok := out["related_tasks"]; ok && raw != nil {
+		if rts, ok := raw.([]map[string]any); ok && len(rts) > 0 {
+			slimRelated := make([]map[string]any, 0, len(rts))
+			for _, rt := range rts {
+				m := map[string]any{
+					"task_id": rt["task_id"],
+					"title":   rt["title"],
+					"goal":    rt["goal"],
+				}
+				if fc, ok := rt["findings_count"]; ok {
+					m["findings_count"] = fc
+				}
+				if ac, ok := rt["facts_count"]; ok {
+					m["facts_count"] = ac
+				}
+				slimRelated = append(slimRelated, m)
+			}
+			out["related_tasks"] = slimRelated
+			out["related_tasks_hint"] = "关联任务资产与事实可通过 list_assets/node_detail 按需查阅"
+		}
+	}
+
+	// 3. open_intents: 提示词中仅保留前 10 条高优先级开放意图（总数见 frontier_open）。
+	if raw, ok := out["open_intents"]; ok && raw != nil {
+		if oi, ok := raw.([]map[string]any); ok && len(oi) > 10 {
+			out["open_intents"] = oi[:10]
+		}
+	}
+
+	// 4. recent_done_intents: 提示词中仅保留最新 5 条已完成意图（总数见 done_intents_total）。
+	if raw, ok := out["recent_done_intents"]; ok && raw != nil {
+		if rdi, ok := raw.([]map[string]any); ok && len(rdi) > 5 {
+			out["recent_done_intents"] = rdi[:5]
+		}
+	}
+
+	// 5. recent_facts: 提示词中仅保留最新 6 条事实摘要（更早的通过 list_facts 分页获取）。
+	if raw, ok := out["recent_facts"]; ok && raw != nil {
+		if rf, ok := raw.([]map[string]any); ok && len(rf) > 6 {
+			out["recent_facts"] = rf[:6]
+		}
+	}
+
+	// 6. finding_list: 提示词中仅保留最新 5 条漏洞（总数见 findings_total，更早的通过 list_findings 获取）。
+	if raw, ok := out["finding_list"]; ok && raw != nil {
+		if fl, ok := raw.([]map[string]any); ok && len(fl) > 5 {
+			out["finding_list"] = fl[:5]
+		}
+	}
+
+	return out
+}
+
+// renderGraphOverview folds a distilled situational snapshot into the wake-up
+// prompt so the planner starts each round with the essential situation in hand
+// without wasting thousands of tokens on cold digests, verbose task lineages, and
+// long historical lists. Full detail remains one tool call away (graph_overview,
+// node_detail, list_facts, list_findings, expand_digest).
 func renderGraphOverview(data map[string]any) string {
-	b, err := json.Marshal(data)
+	distilled := distillOverviewForPrompt(data)
+	b, err := json.Marshal(distilled)
 	if err != nil {
 		return "" // fall back to the model calling graph_overview itself
 	}
-	return "\n\n【本轮态势（graph_overview 预取，等同你调用该工具的返回；需要细节再按需调 node_detail/list_facts 等）】：\n" + string(b)
+	return "\n\n【本轮精简态势（核心指标与活跃意图；完整图谱/深层历史可按需调 graph_overview/list_facts/node_detail）】：\n" + string(b)
 }
 
 // plannerDefaultTmpl is the built-in EDITABLE body (段 [A]) of the planner prompt,
@@ -306,7 +410,7 @@ const plannerDefaultTmpl = `你是一个网络安全平台授权渗透测试系�
 
 **每次唤醒的决策流程**：
 
-1. **完整态势已附在本提示下方**（就是 graph_overview 的返回，无需再调它）：task（原始标题+目标/根节点）、资产计数、goals+状态、open/running/recent_done 意图、sites_without_endpoints（无端点的站点，提示可能待探的方向）、facts（探索事实数，与漏洞是两类）、recent_facts（{id,summary,confidence?}）。
+1. **核心态势已附在本提示下方**（提炼自 graph_overview，含核心指标与活跃意图）：task（目标/根节点）、资产与覆盖度指标、goals 状态、open/running/recent_done 意图、核心计数与最新一窗事实/漏洞。更深历史与冷区归档按需调用 graph_overview / list_facts / expand_digest 取，无需全量重拉。
    - **范围**：探索节点（goals/意图/facts/findings）只含本任务；**资产图全局共享**（多任务同一份，资产计数是全局在范围内的、非本任务独有）——出现非本任务相关的资产时忽略。
    - **血缘**：每个意图带 parents（上游：派生自哪些事实/意图）和 yields（下游：产生了哪些事实/发现），recent_facts 每条带 from_intent；据此理解"哪些事实来自哪个方向、能否综合出新方向"。
    - **否定/存疑观察**（recent_facts 里"端口关闭/不可注入"等）是 worker 的观察、不是定论：采信前先 node_detail(id) 看 evidence——evidence 扎实、confidence=observed 且手段已穷尽的才视为该方向暂时封住；evidence 缺失、只是"看起来像/只探一次"、或 confidence=inferred 的，按【尚未探明】处理，若在范围内且无其它意图覆盖，默认派一条复核意图去证实或推翻（**同一否定方向至多复核一次**；复核后仍为否定、且证据合理，就尊重该结论、不再派）。
