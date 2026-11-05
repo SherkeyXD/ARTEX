@@ -79,6 +79,7 @@ import type {
   TaskAssetScopeMutation,
   TaskCategory,
   TaskConstraint,
+  TaskContextMetricsReport,
   TaskGoal,
   TaskLLMResolutions,
   TaskNode,
@@ -366,6 +367,8 @@ export const api = {
     }>(`/tasks/${id}/coverage`),
   // 资产覆盖图：范围内全部资产 + 连接用的根域名/公司节点，含 tested/in_scope。
   taskCoverageGraph: (id: string) => get<CoverageGraphData>(`/tasks/${id}/coverage-graph`),
+  // 任务上下文生命周期、耗时瀑布流与度量看板（参考 dsh-context）
+  taskContextMetrics: (id: string) => get<TaskContextMetricsReport>(`/tasks/${id}/context-metrics`),
   // 全局 llm_usage 聚合（仪表盘新版 token 视图）：按 profile 总量 + 按天分桶。
   usageStats: (days = 365) => get<UsageStats>(`/tokens/usage?days=${days}`),
   // ---- 目标管理（总览）----

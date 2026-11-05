@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 import {
   ArrowUpIcon,
+  ArrowUpRightIcon,
   BrainIcon,
   ChevronDownIcon,
   CircleCheckIcon,
@@ -781,7 +783,6 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   );
 
   // ── task token total (whole task, all agents) ───────────────────────────────────
-  React.useEffect(() => {
   useVisibilityPoll(async () => {
     try {
       const r = await api.tokenStats(taskId);
@@ -1571,24 +1572,34 @@ export function SessionsTab({ taskId }: { taskId: string }) {
               )}
             </div>
             {taskTokens && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                    <span>任务总计</span>
-                    <span>·</span>
-                    <TokenMetrics
-                      input={taskTokens.input_tokens}
-                      cache={taskTokens.cache_read_tokens}
-                      output={taskTokens.output_tokens}
-                    />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  输入 {taskTokens.input_tokens.toLocaleString()} · 输出 {taskTokens.output_tokens.toLocaleString()} ·
-                  缓存读取 {taskTokens.cache_read_tokens.toLocaleString()} · 缓存写入{" "}
-                  {taskTokens.cache_write_tokens.toLocaleString()}
-                </TooltipContent>
-              </Tooltip>
+              <div className="mt-2 flex min-w-0 flex-wrap items-center justify-between gap-1 text-xs text-muted-foreground">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1">
+                      <span>任务总计</span>
+                      <span>·</span>
+                      <TokenMetrics
+                        input={taskTokens.input_tokens}
+                        cache={taskTokens.cache_read_tokens}
+                        output={taskTokens.output_tokens}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    输入 {taskTokens.input_tokens.toLocaleString()} · 输出 {taskTokens.output_tokens.toLocaleString()} ·
+                    缓存读取 {taskTokens.cache_read_tokens.toLocaleString()} · 缓存写入{" "}
+                    {taskTokens.cache_write_tokens.toLocaleString()}
+                  </TooltipContent>
+                </Tooltip>
+                <Link
+                  href={`/function/tasks/detail?id=${taskId}&tab=context`}
+                  className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground hover:text-primary transition-colors"
+                  title="查看上下文构成与耗时监控看板"
+                >
+                  上下文监控
+                  <ArrowUpRightIcon className="size-3" />
+                </Link>
+              </div>
             )}
           </div>
           <ScrollArea
