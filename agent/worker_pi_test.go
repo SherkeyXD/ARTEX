@@ -5,7 +5,7 @@ import (
 	"iter"
 	"testing"
 
-	"github.com/Autumn-27/artex/db"
+	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 )
