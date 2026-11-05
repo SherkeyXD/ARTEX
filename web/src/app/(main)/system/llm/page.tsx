@@ -27,6 +27,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -116,12 +117,13 @@ function PoolSheet({
 }) {
   const [busy, setBusy] = React.useState(false);
 
-  // 冷却倒计时是后端算出的剩余秒数——抽屉开着且有配置不正常时才定时拉，让它走起来。
-  React.useEffect(() => {
-    if (!open || !pool?.enabled || !pool.chain.some((m) => m.state !== "ok")) return;
-    const t = setInterval(() => void onReload(), 10_000);
-    return () => clearInterval(t);
-  }, [open, pool, onReload]);
+  // 冷却倒计时是后端算出的剩余秒数——抽屉开着且有配置不正常时才定时拉，让它走起来。页面在后台时休眠。
+  const shouldPoll = Boolean(open && pool?.enabled && pool.chain.some((m) => m.state !== "ok"));
+  useVisibilityPoll(onReload, 10_000, {
+    enabled: shouldPoll,
+    immediate: false,
+    refetchOnFocus: true,
+  });
 
   async function toggle(patch: { llm_pool_enabled?: boolean; llm_pool_bind_fallback?: boolean }) {
     if (busy) return;

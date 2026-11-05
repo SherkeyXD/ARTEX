@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { api } from "@/lib/api";
 import type {
   AssetInterceptKind,
@@ -348,69 +349,59 @@ export function OverviewTab({ taskId }: { taskId: string }) {
   };
 
   React.useEffect(() => {
-    let cancelled = false;
-    let loading = false;
+    void loadScope();
+  }, [loadScope]);
 
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [taskResp, statsResp, intentsResp, findingsResp] = await Promise.all([
-          api.task(taskId),
-          api.stats(taskId),
-          api.intents(taskId),
-          api.findings(taskId),
-        ]);
-        if (cancelled) return;
-        const activeTask = statsResp.active_task;
-        setTask(
-          activeTask
-            ? {
-                ...taskResp,
-                in_flight: activeTask.in_flight,
-                goals_total: activeTask.goals_total,
-                goals_met: activeTask.goals_met,
-                engine_mode: statsResp.engine_mode ?? activeTask.engine_mode,
-                paused: activeTask.paused,
-              }
-            : taskResp,
-        );
+  const overviewSigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const [taskResp, statsResp, intentsResp, findingsResp] = await Promise.all([
+        api.task(taskId),
+        api.stats(taskId),
+        api.intents(taskId),
+        api.findings(taskId),
+      ]);
+      const activeTask = statsResp.active_task;
+      const nextTask = activeTask
+        ? {
+            ...taskResp,
+            in_flight: activeTask.in_flight,
+            goals_total: activeTask.goals_total,
+            goals_met: activeTask.goals_met,
+            engine_mode: statsResp.engine_mode ?? activeTask.engine_mode,
+            paused: activeTask.paused,
+          }
+        : taskResp;
+      const sig = JSON.stringify([
+        nextTask.status,
+        nextTask.in_flight,
+        nextTask.goals_met,
+        nextTask.goals_total,
+        nextTask.paused,
+        statsResp.engine_mode,
+        intentsResp.length,
+        intentsResp[0]?.id,
+        intentsResp[0]?.state,
+        findingsResp.length,
+        findingsResp[0]?.id,
+        findingsResp[0]?.severity,
+        findingsResp[0]?.status,
+      ]);
+      if (sig !== overviewSigRef.current) {
+        overviewSigRef.current = sig;
+        setTask(nextTask);
         setStats(statsResp);
         setIntents(intentsResp);
         setFindings(findingsResp);
-        // coverage is independent + may 503 when no asset store — fetch separately so
-        // its failure never blocks the others.
-        api
-          .taskCoverage(taskId)
-          .then((c) => {
-            if (!cancelled) setCoverage(c);
-          })
-          .catch(() => {
-            // A transient coverage failure is retried by the next poll.
-          });
-      } catch {
-        // transient errors are ignored; the next poll will retry
-      } finally {
-        loading = false;
+        api.taskCoverage(taskId).then(setCoverage).catch(() => {});
       }
-    };
-
-    void load();
-    void loadScope();
-    void loadTokens();
-    void loadGoals();
-    void loadConstraints();
-    const timer = setInterval(() => {
-      void load();
       void loadTokens();
       void loadGoals();
       void loadConstraints();
-    }, 3000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [taskId, loadScope, loadTokens, loadGoals, loadConstraints]);
+    } catch {
+      // transient errors are ignored; the next poll will retry
+    }
+  }, 3000);
 
   const running = intents.filter((i) => i.state === "running");
   const open = intents.filter((i) => i.state === "open");

@@ -39,6 +39,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { api } from "@/lib/api";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { statusMeta } from "@/lib/status";
 import type {
@@ -166,29 +167,48 @@ export default function FindingsPage() {
   const activeFilterFingerprint = React.useRef(filterFingerprint);
   activeFilterFingerprint.current = filterFingerprint;
 
-  // 一个轻量请求覆盖所有行/视图，避免逐行拉取完整复测历史；等待上一轮完成再轮询。
+  // 一个轻量请求覆盖所有行/视图，避免逐行拉取完整复测历史；等待上一轮完成再轮询。页面在后台时休眠。
+  const activeRetestsSigRef = React.useRef("");
   React.useEffect(() => {
     let disposed = false;
     let failed = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function refreshRetests() {
       const version = retestRefreshVersion.current;
       try {
         const rows = await api.activeFindingRetests();
         if (disposed || version !== retestRefreshVersion.current) return;
-        setActiveRetests(Object.fromEntries(rows.map((item) => [item.finding_id, item])));
+        const sig = rows.map((item) => `${item.finding_id}:${item.status}:${item.updated_at || ""}`).join(";");
+        if (sig !== activeRetestsSigRef.current) {
+          activeRetestsSigRef.current = sig;
+          setActiveRetests(Object.fromEntries(rows.map((item) => [item.finding_id, item])));
+        }
         failed = false;
       } catch (error) {
         if (!disposed && !failed) toast.error(`加载复测状态失败：${(error as Error).message}`);
         failed = true;
       } finally {
-        if (!disposed) timer = setTimeout(() => void refreshRetests(), 3000);
+        if (!disposed) {
+          if (typeof document !== "undefined" && document.hidden) {
+            return;
+          }
+          timer = setTimeout(() => void refreshRetests(), 3000);
+        }
       }
     }
     void refreshRetests();
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden && !disposed) {
+        if (timer) clearTimeout(timer);
+        void refreshRetests();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       disposed = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
@@ -547,8 +567,32 @@ export default function FindingsPage() {
     };
     refresh();
     if (view === "asset") return;
-    const timer = setInterval(refresh, 5000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startTimer = () => {
+      if (!timer && typeof document !== "undefined" && !document.hidden) {
+        timer = setInterval(refresh, 5000);
+      }
+    };
+    const stopTimer = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        refresh();
+        startTimer();
+      }
+    };
+    startTimer();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [activeRetestFingerprint, loadFlat, loadGroup, preferencesHydrated, refreshGroups, view]);
 
   React.useEffect(() => {
@@ -564,28 +608,23 @@ export default function FindingsPage() {
 
   // Whole-table aggregates (stat cards + vuln-class options) — independent of the
   // current page, so they stay exact.
-  React.useEffect(() => {
-    let alive = true;
-    const load = () => {
-      api
-        .findingStats()
-        .then((s) => {
-          if (alive) {
-            setStats(s);
-            setStatsLoaded(true);
-          }
-        })
-        .catch(() => {
-          // Keep the previous aggregate snapshot until the next poll.
-        });
-    };
-    load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+  const statsSigRef = React.useRef("");
+  useVisibilityPoll(
+    React.useCallback(async () => {
+      try {
+        const s = await api.findingStats();
+        const sig = JSON.stringify(s);
+        if (sig !== statsSigRef.current) {
+          statsSigRef.current = sig;
+          setStats(s);
+        }
+        setStatsLoaded(true);
+      } catch {
+        // Keep the previous aggregate snapshot until the next poll.
+      }
+    }, []),
+    5000
+  );
 
   React.useEffect(() => {
     if (!statsLoaded) return;

@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { useStoredSortPreference } from "@/lib/sort-preference";
 import { statusMeta } from "@/lib/status";
 import type { Finding, FindingStatus } from "@/lib/types";
@@ -141,25 +142,19 @@ export function FindingsTab({ taskId }: { taskId: string }) {
     "desc",
   );
 
-  React.useEffect(() => {
-    let active = true;
-    const load = () => {
-      api
-        .findings(taskId)
-        .then((fs) => {
-          if (active) setFindings(fs);
-        })
-        .catch(() => {
-          // Keep the last successful snapshot during transient refresh failures.
-        });
-    };
-    load();
-    const t = setInterval(load, 3000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+  const sigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const fs = await api.findings(taskId);
+      const nextSig = JSON.stringify([fs.length, fs[0]?.id, fs[0]?.severity, fs[0]?.status, fs[0]?.ts]);
+      if (nextSig !== sigRef.current) {
+        sigRef.current = nextSig;
+        setFindings(fs);
+      }
+    } catch {
+      // Keep the last successful snapshot during transient refresh failures.
+    }
+  }, 3000);
 
   const onStatus = React.useCallback(async (f: Finding, next: FindingStatus) => {
     if (f.inherited || !f.finding_id || next === f.status) return;

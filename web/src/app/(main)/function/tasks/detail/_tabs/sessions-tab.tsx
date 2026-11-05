@@ -50,6 +50,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSideQuestions } from "@/hooks/use-side-questions";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { api, sseUrl } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
 import { MOCK } from "@/lib/mock/enabled";
@@ -781,93 +782,46 @@ export function SessionsTab({ taskId }: { taskId: string }) {
 
   // ── task token total (whole task, all agents) ───────────────────────────────────
   React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .tokenStats(taskId)
-        .then((r) => {
-          if (!alive) return;
-          setTaskTokens(r.total);
-          setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+  useVisibilityPoll(async () => {
+    try {
+      const r = await api.tokenStats(taskId);
+      setTaskTokens(r.total);
+      setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
+    } catch {
+      // Polling is best-effort; the next interval retries automatically.
+    }
+  }, 5000);
 
-  React.useEffect(() => {
-    let alive = true;
-    setMainChatRunning(null);
-    const load = () => {
-      const request = ++chatStatusRequestRef.current;
-      return api
-        .chatStatus(taskId)
-        .then(({ running }) => {
-          if (alive && chatStatusRequestRef.current === request) setMainChatRunning(running);
-        })
-        .catch(() => {
-          // Keep the last authoritative value. Before the first success, recent
-          // activity remains a conservative fallback.
-        });
-    };
-    void load();
-    const timer = setInterval(load, 2000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [taskId]);
+  useVisibilityPoll(async () => {
+    const request = ++chatStatusRequestRef.current;
+    try {
+      const { running } = await api.chatStatus(taskId);
+      if (chatStatusRequestRef.current === request) setMainChatRunning(running);
+    } catch {
+      // Keep the last authoritative value. Before the first success, recent
+      // activity remains a conservative fallback.
+    }
+  }, 3000);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .taskLLMResolution(taskId)
-        .then((value) => {
-          if (alive) setLLMResolutions(value);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const timer = setInterval(load, 10_000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [taskId]);
+  useVisibilityPoll(async () => {
+    try {
+      const value = await api.taskLLMResolution(taskId);
+      setLLMResolutions(value);
+    } catch {
+      // Polling is best-effort; the next interval retries automatically.
+    }
+  }, 10_000);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .interceptTask(taskId)
-        .then((rows) => {
-          if (alive) setPendingIntercepts(rows.filter((r) => r.status === "pending"));
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+  useVisibilityPoll(async () => {
+    try {
+      const rows = await api.interceptTask(taskId);
+      setPendingIntercepts(rows.filter((r) => r.status === "pending"));
+    } catch {
+      // Polling is best-effort; the next interval retries automatically.
+    }
+  }, 5000);
 
-  // Re-render on a timer so "streaming" liveness recomputes as activity goes stale.
   const [, setTick] = React.useState(0);
-  React.useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1500);
-    return () => clearInterval(id);
-  }, []);
 
   // ── first load + single task SSE ────────────────────────────────────────────────
   // On task open: load Main's latest page, take the task-level snapshot cursor from
@@ -1047,64 +1001,38 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     };
   }, [taskId, patchStore]);
 
-  React.useEffect(() => {
-    let active = true;
-    const load = () =>
-      api
-        .taskIntentAssets(taskId)
-        .then((assets) => {
-          if (active) setIntentAssets(assets);
-        })
-        .catch(() => {
-          // The next poll retries; Worker controls and transcripts remain available.
-        });
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [taskId]);
+  useVisibilityPoll(async () => {
+    try {
+      const assets = await api.taskIntentAssets(taskId);
+      setIntentAssets(assets);
+    } catch {
+      // The next poll retries; Worker controls and transcripts remain available.
+    }
+  }, 5000);
 
   // ── worker (intent) session list — paged, poll first page lightly ───────────────
-  React.useEffect(() => {
-    let active = true;
-    firstIntentsRef.current = [];
-    setIntents([]);
-    setOlderIntents([]);
-    setFirstIntentsHasMore(false);
-    setOlderIntentsHasMore(false);
-    const load = () =>
-      api
-        .intentsPage(taskId, 0, 300)
-        .then((r) => {
-          if (!active) return;
-          const freshIds = new Set(r.items.map((item) => item.id));
-          const oldestFreshId = r.items.reduce((minimum, item) => Math.min(minimum, Number(item.id)), Infinity);
-          const displaced = r.hasMore
-            ? firstIntentsRef.current.filter((item) => !freshIds.has(item.id) && Number(item.id) < oldestFreshId)
-            : [];
-          if (displaced.length > 0) {
-            setOlderIntents((previous) => {
-              const byId = new Map(previous.map((item) => [item.id, item]));
-              for (const item of displaced) byId.set(item.id, item);
-              return [...byId.values()];
-            });
-          }
-          firstIntentsRef.current = r.items;
-          setIntents(r.items);
-          setFirstIntentsHasMore(r.hasMore);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
+  useVisibilityPoll(async () => {
+    try {
+      const r = await api.intentsPage(taskId, 0, 300);
+      const freshIds = new Set(r.items.map((item) => item.id));
+      const oldestFreshId = r.items.reduce((minimum, item) => Math.min(minimum, Number(item.id)), Infinity);
+      const displaced = r.hasMore
+        ? firstIntentsRef.current.filter((item) => !freshIds.has(item.id) && Number(item.id) < oldestFreshId)
+        : [];
+      if (displaced.length > 0) {
+        setOlderIntents((previous) => {
+          const byId = new Map(previous.map((item) => [item.id, item]));
+          for (const item of displaced) byId.set(item.id, item);
+          return [...byId.values()];
         });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      active = false;
-      clearInterval(t);
-    };
-  }, [taskId]);
+      }
+      firstIntentsRef.current = r.items;
+      setIntents(r.items);
+      setFirstIntentsHasMore(r.hasMore);
+    } catch {
+      // Polling is best-effort; the next interval retries automatically.
+    }
+  }, 5000);
 
   const loadOlderIntents = React.useCallback(() => {
     if (loadingOlderIntents) return;
@@ -1227,6 +1155,25 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     if (last && (last.kind === "result" || (last.kind === "text" && last.is_error))) return null;
     return seg;
   }, [sending, mainChatRunning, mainSegs, store, currentSeg]);
+
+  // Re-render on a timer ONLY when a turn is actively live/streaming and document is visible.
+  const hasLiveActivity = Boolean(
+    sending ||
+      mainChatRunning ||
+      plannerLive ||
+      liveMainSeg !== null ||
+      Object.values(store).some((s) => {
+        if (!s.lastTs) return false;
+        const t = Date.parse(s.lastTs);
+        return t > 0 && Date.now() - t < STREAM_WINDOW_MS;
+      }),
+  );
+
+  useVisibilityPoll(() => setTick((t) => t + 1), 2000, {
+    enabled: hasLiveActivity,
+    immediate: false,
+    refetchOnFocus: false,
+  });
 
   // Every main-agent segment is an independent, interactive session (like the top-level
   // chat conversations) — you can talk in any of them, newest-first.

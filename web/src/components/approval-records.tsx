@@ -26,6 +26,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import type {
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -664,11 +665,13 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   const decisionLock = React.useRef(false);
   const filterID = React.useId();
   const filtered = Boolean(filter.status || filter.decision_source);
+  const sigRef = React.useRef("");
 
   // A task can stay mounted while the user switches between task details.
   // Reset the cursor so the new scope always starts at its newest records.
   // biome-ignore lint/correctness/useExhaustiveDependencies: taskId intentionally resets pagination when scope changes.
   React.useEffect(() => {
+    sigRef.current = "";
     setPage(1);
   }, [taskId]);
 
@@ -685,18 +688,32 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
           api.interceptPending(),
         ]);
         if (id !== request.current) return;
-        if (history.status === "fulfilled") {
-          setRows(history.value.items);
-          setTotal(history.value.total);
+        if (history.status === "fulfilled" && pending.status === "fulfilled") {
+          const histSig = `${history.value.total}|${history.value.items.map((x) => `${x.id}:${x.decision}:${x.status || ""}`).join(";")}`;
+          const pendSig = `${pending.value.length}|${pending.value.map((x) => x.id).join(";")}`;
+          const nextSig = `${histSig}#${pendSig}`;
+          if (nextSig !== sigRef.current) {
+            sigRef.current = nextSig;
+            setRows(history.value.items);
+            setTotal(history.value.total);
+            setPendingRows(pending.value);
+          }
           setError("");
-        } else {
-          setError((history.reason as Error).message || "加载失败");
-        }
-        if (pending.status === "fulfilled") {
-          setPendingRows(pending.value);
           setPendingError("");
         } else {
-          setPendingError((pending.reason as Error).message || "加载失败");
+          if (history.status === "fulfilled") {
+            setRows(history.value.items);
+            setTotal(history.value.total);
+            setError("");
+          } else {
+            setError((history.reason as Error).message || "加载失败");
+          }
+          if (pending.status === "fulfilled") {
+            setPendingRows(pending.value);
+            setPendingError("");
+          } else {
+            setPendingError((pending.reason as Error).message || "加载失败");
+          }
         }
         if (manual) setRevision((v) => v + 1);
       } catch (e) {
@@ -715,12 +732,13 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
 
   React.useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 5000);
-    return () => {
-      request.current++;
-      clearInterval(timer);
-    };
   }, [load]);
+
+  useVisibilityPoll(
+    React.useCallback(() => load(), [load]),
+    5000,
+    { immediate: false, refetchOnFocus: true }
+  );
 
   const changePageSize = (next: number) => {
     setPageSize(next);
@@ -730,6 +748,7 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   const changeFilter = (next: InterceptApprovalFilter) => {
     // An in-flight response for the old filter must not repopulate the table.
     request.current++;
+    sigRef.current = "";
     setFilter(next);
     setPage(1);
     setRows([]);
