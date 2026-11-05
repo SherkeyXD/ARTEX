@@ -121,3 +121,23 @@ func TestSearchAndGetWorkerTraceTools_Definition(t *testing.T) {
 	}
 }
 
+func BenchmarkExtractGrepMatches(b *testing.B) {
+	// 模拟 1000 行典型的扫描/工具终端日志（约 50KB）
+	var sb strings.Builder
+	for i := 0; i < 1000; i++ {
+		if i == 500 {
+			sb.WriteString("2026-11-05 12:00:00 [HIT] target_token = \"FLAG{benchmark_secret}\"\n")
+		} else {
+			sb.WriteString("2026-11-05 12:00:00 [INFO] scanner visiting path /api/v1/resource/item/test\n")
+		}
+	}
+	text := sb.String()
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = ExtractGrepMatches(text, "benchmark_secret", 2, 5)
+	}
+}
+
+
