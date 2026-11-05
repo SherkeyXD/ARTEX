@@ -126,9 +126,6 @@ func TestTaskArchiveDatabaseRoundTrip(t *testing.T) {
 		t.Skipf("postgres unavailable (%v) — skipping", err)
 	}
 	defer d.Close()
-	if err := d.EnsureLLMRecordsTable(); err != nil {
-		t.Fatal(err)
-	}
 	if err := d.EnsureLLMUsageTable(); err != nil {
 		t.Fatal(err)
 	}
@@ -191,12 +188,6 @@ VALUES($1,$2,0,'quota_exhausted','balance exhausted',$3,$4,$3)`, task.ID, llmPro
 	if err := d.InsertToolUsage(&ToolUsage{ToolKey: toolName, AgentKey: "worker", TaskID: task.ID, ExplorationID: task.ExplorationID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.InsertLLMRecord(&LLMRecord{
-		TaskID: fmt.Sprint(task.ID), Model: "archive-model", SessionID: "archive-session",
-		Status: "ok", RawRequest: strings.Repeat("request", 1024), RawResponse: strings.Repeat("response", 1024),
-	}); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := d.AddFinding(task.ID, nodeID, vulnclass, "archive finding", SeverityCritical, "summary", "evidence", "worker", []int64{assetID}); err != nil {
 		t.Fatal(err)
 	}
@@ -208,16 +199,9 @@ VALUES($1,$2,0,'quota_exhausted','balance exhausted',$3,$4,$3)`, task.ID, llmPro
 	if err != nil || claimed == nil || claimed.ID != archive.ID || claimed.State != Archiving {
 		t.Fatalf("claim = %+v, %v", claimed, err)
 	}
-	var llmRecords bytes.Buffer
-	snapshot, err := d.SnapshotTaskArchiveWithLLMRecords(task.ID, &llmRecords)
+	snapshot, err := d.SnapshotTaskArchive(task.ID)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if snapshot.StreamedTables["llm_records"] != TaskArchiveLLMRecordsPath || snapshot.DataCounts["llm_records"] != 1 {
-		t.Fatalf("unexpected streamed LLM metadata: paths=%v counts=%v", snapshot.StreamedTables, snapshot.DataCounts)
-	}
-	if rawRowCount(snapshot.Tables["llm_records"]) != 0 {
-		t.Fatal("streamed LLM records were also retained in manifest memory")
 	}
 	if snapshot.DataCounts["assets"] != 1 || snapshot.DataCounts["exploration_nodes"] < 2 {
 		t.Fatalf("unexpected snapshot counts: %#v", snapshot.DataCounts)
@@ -263,8 +247,8 @@ VALUES($1,$2,0,'quota_exhausted','balance exhausted',$3,$4,$3)`, task.ID, llmPro
 	if err != nil || claimed == nil || claimed.State != Restoring {
 		t.Fatalf("restore claim = %+v, %v", claimed, err)
 	}
-	warnings, err := d.RestoreTaskArchiveWithLLMRecords(
-		archive.ID, snapshot, int64((10 * time.Minute).Seconds()), bytes.NewReader(llmRecords.Bytes()),
+	warnings, err := d.RestoreTaskArchive(
+		archive.ID, snapshot, int64((10 * time.Minute).Seconds()),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -296,14 +280,6 @@ VALUES($1,$2,0,'quota_exhausted','balance exhausted',$3,$4,$3)`, task.ID, llmPro
 	}
 	if nodes < 2 || assets != 1 || usage != 1 {
 		t.Fatalf("restore incomplete nodes=%d assets=%d usage=%d", nodes, assets, usage)
-	}
-	var restoredRawRequest, restoredRawResponse string
-	if err := d.QueryRow(`SELECT COALESCE(raw_request,''),COALESCE(raw_response,'') FROM llm_records WHERE task_id=$1`, fmt.Sprint(task.ID)).
-		Scan(&restoredRawRequest, &restoredRawResponse); err != nil {
-		t.Fatal(err)
-	}
-	if restoredRawRequest != strings.Repeat("request", 1024) || restoredRawResponse != strings.Repeat("response", 1024) {
-		t.Fatal("restored streamed LLM record body was truncated")
 	}
 	var restoredCompanyID *int64
 	var restoredStatus, restoredError string

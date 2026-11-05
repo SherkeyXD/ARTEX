@@ -73,7 +73,7 @@ func newRetestServer(t *testing.T) (*Server, int64) {
 }
 
 func setRetestProvider(s *Server, p retestProvider) {
-	s.chatAgent = agent.NewChatAgent(p, "test", s.m.dir, nil, 10000)
+	s.chatAgent = agent.NewChatAgent(p, "test", s.m.dir, 10000)
 	s.chatAgent.SetNonStreaming(func() bool { return true })
 }
 

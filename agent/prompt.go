@@ -16,7 +16,7 @@ var PromptOverride func(agentKey string) (string, bool)
 // user template referencing a catalog variable renders; referencing anything else
 // fails template execution and falls back to the built-in default.
 type PlannerVars struct{ Goal, Scope, AssetSummary, DataDir, Now string }
-type WorkerVars struct{ ProxyAddr, WorkerName, DataDir, Now string }
+type WorkerVars struct{ WorkerName, DataDir, Now string }
 type MainVars struct{ Goal, AssetSummary, FindingsSummary, DataDir, Now string }
 type GoalsVars struct{ EngagementDescription, DataDir, Now string }
 
@@ -38,7 +38,7 @@ func nowDateStr() string { return time.Now().Format("2006-01-02") }
 // Rendering always runs (def used to be pre-substituted plain text; it is now a
 // {{.Var}} template like the DB one). On any render error we fall back to the
 // default template, then to the raw default string — an agent never starts with a
-// half-rendered prompt. Callers append the code-owned tail (trafficTool / 中间产物
+// half-rendered prompt. Callers append the code-owned tail (中间产物
 // 输出规约) AFTER this, so those can't be edited away via the DB body.
 func renderSystem(agentKey, def string, vars any) string {
 	tmpl := def

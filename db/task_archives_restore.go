@@ -67,9 +67,6 @@ WHERE relation.source_task_id=$1 LIMIT 1`, taskID).Scan(&dependent)
 	if _, err := tx.Exec(`DELETE FROM intercept_pending WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`DELETE FROM llm_records WHERE COALESCE(task_id,'')=$1`, strconv.FormatInt(taskID, 10)); err != nil {
-		return err
-	}
 	if _, err := tx.Exec(`DELETE FROM llm_usage WHERE COALESCE(task_id,'')=$1 OR exploration_id=$2`, strconv.FormatInt(taskID, 10), expID); err != nil {
 		return err
 	}
@@ -138,7 +135,7 @@ WHERE id=$1`, archiveID, ArchiveReady, archivePath, sha256, originalSize, compre
 }
 
 // RestoreTaskArchive restores PostgreSQL rows from a verified manifest. It is
-// idempotent for accounting/traffic retry scenarios and returns non-fatal
+// idempotent for retry scenarios and returns non-fatal
 // warnings for global objects that intentionally are not recreated.
 func (d *DB) RestoreTaskArchive(archiveID int64, snapshot *TaskArchiveSnapshot, remainingTimeoutSeconds int64) ([]string, error) {
 	return d.restoreTaskArchive(archiveID, snapshot, remainingTimeoutSeconds, nil)
@@ -236,10 +233,6 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 	if err != nil {
 		return nil, err
 	}
-	remappedTables["findings"], err = normalizeArchivedFindingVersions(remappedTables["findings"])
-	if err != nil {
-		return nil, err
-	}
 	// Insert graph rows in foreign-key order. The archived stub has no graph rows,
 	// so an ID conflict signals external corruption and must stop the restore.
 	for _, table := range []string{"exploration_nodes", "exploration_edges", "exploration_anchors", "task_constraints", "activity"} {
@@ -272,19 +265,8 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 			return nil, fmt.Errorf("restore %s: %w", table, err)
 		}
 	}
-	if err := restoreFindingTrafficTx(tx, snapshot); err != nil {
-		return nil, fmt.Errorf("restore finding traffic: %w", err)
-	}
-	if streamedLLMRecords != "" {
-		count, err := insertArchiveJSONSequenceRows(tx, "llm_records", llmRecords)
-		if err != nil {
-			return nil, fmt.Errorf("restore llm_records: %w", err)
-		}
-		if expected := snapshot.DataCounts["llm_records"]; count != expected {
-			return nil, fmt.Errorf("restore llm_records: row count %d does not match manifest %d", count, expected)
-		}
-	} else if err := insertArchiveRows(tx, "llm_records", remappedTables["llm_records"]); err != nil {
-		return nil, fmt.Errorf("restore llm_records: %w", err)
+	if streamedLLMRecords != "" && llmRecords != nil {
+		_, _ = io.Copy(io.Discard, llmRecords)
 	}
 	for _, table := range []string{"llm_usage", "skill_usage", "tool_usage"} {
 		if err := insertArchiveRows(tx, table, remappedTables[table]); err != nil {
@@ -387,7 +369,7 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 	allowed := map[string]bool{
 		"exploration_nodes": true, "exploration_edges": true, "exploration_anchors": true,
 		"task_constraints": true, "activity": true, "task_asset_links": true, "findings": true,
-		"llm_records": true, "llm_usage": true, "skill_usage": true, "tool_usage": true,
+		"llm_usage": true, "skill_usage": true, "tool_usage": true,
 		"side_question_sessions": true, "side_question_requests": true,
 	}
 	if !allowed[table] {
@@ -398,36 +380,6 @@ func insertArchiveRows(tx *sql.Tx, table string, raw json.RawMessage) error {
 	}
 	_, err := tx.Exec(`INSERT INTO `+table+` SELECT * FROM json_populate_recordset(NULL::`+table+`,$1::json)`, string(raw))
 	return err
-}
-
-func insertArchiveJSONSequenceRows(tx *sql.Tx, table string, reader io.Reader) (int64, error) {
-	if table != "llm_records" {
-		return 0, fmt.Errorf("archive streamed restore table %q is not allowed", table)
-	}
-	statement, err := tx.Prepare(`INSERT INTO llm_records SELECT * FROM json_populate_record(NULL::llm_records,$1::json)`)
-	if err != nil {
-		return 0, err
-	}
-	defer statement.Close()
-	decoder := json.NewDecoder(reader)
-	var count int64
-	for {
-		var raw json.RawMessage
-		if err := decoder.Decode(&raw); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return 0, err
-		}
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 || trimmed[0] != '{' {
-			return 0, errors.New("streamed archive row must be a JSON object")
-		}
-		if _, err := statement.Exec(string(trimmed)); err != nil {
-			return 0, err
-		}
-		count++
-	}
-	return count, nil
 }
 
 func restoreArchiveAssets(tx *sql.Tx, taskID int64, raw json.RawMessage) (map[int64]int64, []string, error) {

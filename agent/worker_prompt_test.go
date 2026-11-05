@@ -10,8 +10,8 @@ import (
 func TestWorkerSystemPromptIsStaticAcrossIntents(t *testing.T) {
 	// workerSystem should produce identical byte-for-byte system prompts
 	// regardless of what intent or task is being executed, enabling prefix cache hits.
-	sys1 := workerSystem("127.0.0.1:8080", "/ca.pem", "/data")
-	sys2 := workerSystem("127.0.0.1:8080", "/ca.pem", "/data")
+	sys1 := workerSystem("/data")
+	sys2 := workerSystem("/data")
 
 	if sys1 != sys2 {
 		t.Fatalf("workerSystem output is not deterministic:\nsys1:\n%s\n\nsys2:\n%s", sys1, sys2)

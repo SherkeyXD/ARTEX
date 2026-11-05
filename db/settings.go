@@ -3,7 +3,7 @@ package db
 import "database/sql"
 
 // Settings is a tiny key-value store for global app config the UI toggles at
-// runtime (e.g. traffic_capture). Missing keys fall back to caller defaults.
+// runtime (e.g. global_proxy). Missing keys fall back to caller defaults.
 
 // GetSetting returns the stored value and ok=false when the key is unset.
 func (d *DB) GetSetting(key string) (value string, ok bool, err error) {

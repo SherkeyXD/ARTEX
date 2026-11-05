@@ -36,7 +36,6 @@ import type {
   Task,
   TokenTotal,
   Tool,
-  TrafficExchange,
   UsageStats,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -141,7 +140,6 @@ export default function DashboardPage() {
   const [convTokens, setConvTokens] = React.useState<ConvTokenSummary[]>([]);
   const [usageStats, setUsageStats] = React.useState<UsageStats | null>(null);
   const [assetCounts, setAssetCounts] = React.useState<Record<string, number>>({});
-  const [traffic, setTraffic] = React.useState<TrafficExchange[]>([]);
   const [agents, setAgents] = React.useState<Agent[]>([]);
   const [mcpServers, setMcpServers] = React.useState<MCPServer[]>([]);
   const [skills, setSkills] = React.useState<SkillItem[]>([]);
@@ -218,13 +216,12 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // slow poll: traffic, assets, system-static (every 15s)
+  // slow poll: assets, system-static (every 15s)
   React.useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const [traf, counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
-          api.traffic(0, 50),
+        const [counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
           api.assetCounts(),
           api.agents(),
           api.mcpServers(),
@@ -234,7 +231,6 @@ export default function DashboardPage() {
           api.usageStats(365),
         ]);
         if (!alive) return;
-        setTraffic(traf.exchanges ?? []);
         setAssetCounts(counts ?? {});
         setAgents(agentList);
         setMcpServers(mcpList);
@@ -303,21 +299,6 @@ export default function DashboardPage() {
   }, [assetCounts]);
 
   const assetMax = assetByType[0]?.[1] ?? 1;
-
-  // traffic status code breakdown
-  const trafficByCodes = React.useMemo(() => {
-    const m: Record<number, number> = {};
-    for (const e of traffic) {
-      const bucket = Math.floor(e.status / 100) * 100;
-      m[bucket] = (m[bucket] ?? 0) + 1;
-    }
-    return Object.entries(m)
-      .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([code, n]) => ({ code: Number(code), n }));
-  }, [traffic]);
-
-  const trafficMax = Math.max(...trafficByCodes.map((x) => x.n), 1);
-  const recentTraffic = [...traffic].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts)).slice(0, 5);
 
   // system
   const activeProfile = llmProfiles.find((p) => p.is_default);
@@ -501,8 +482,8 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* ── Row 1: 5 stat cards ── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      {/* ── Row 1: 4 stat cards ── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {/* 活跃任务 */}
         <Card className="gap-1">
           <CardHeader className="pb-0">
@@ -547,26 +528,6 @@ export default function DashboardPage() {
             <div className="text-2xl font-semibold tabular-nums">{totalAssets}</div>
           </CardHeader>
           <CardContent className="text-[10px] text-muted-foreground">跨任务共享</CardContent>
-        </Card>
-
-        {/* 流量交互 */}
-        <Card className="gap-1">
-          <CardHeader className="pb-0">
-            <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-              <ActivityIcon className="size-3" /> 流量交互
-            </div>
-            <div className="text-2xl font-semibold tabular-nums">{traffic.length}</div>
-          </CardHeader>
-          <CardContent className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-            {settings?.traffic_capture ? (
-              <>
-                <LiveDot />
-                <span>录制中</span>
-              </>
-            ) : (
-              <span>捕获未开启</span>
-            )}
-          </CardContent>
         </Card>
 
         {/* LLM 用量 */}
@@ -1041,8 +1002,8 @@ export default function DashboardPage() {
         </table>
       </Card>
 
-      {/* ── Row 5: 资产分布 | 流量状态码 | 拦截 & 待审批 ── */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      {/* ── Row 5: 资产分布 | 拦截 & 待审批 ── */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* 资产分布 */}
         <Card className="p-4">
           <SectionTitle icon={NetworkIcon} sub="按类型">
@@ -1073,58 +1034,6 @@ export default function DashboardPage() {
           <div className="mt-3 border-t pt-3 text-[10px] text-muted-foreground">共 {totalAssets} 节点</div>
         </Card>
 
-        {/* 流量状态码 */}
-        <Card className="p-4">
-          <SectionTitle icon={ActivityIcon} sub={`${traffic.length} 次请求`}>
-            流量状态码
-          </SectionTitle>
-
-          {/* bar chart */}
-          {trafficByCodes.length === 0 ? (
-            <div className="py-6 text-center text-xs text-muted-foreground">暂无流量数据</div>
-          ) : (
-            <>
-              <div className="mb-3 flex items-end gap-2" style={{ height: 52 }}>
-                {trafficByCodes.map(({ code, n }) => (
-                  <div key={code} className="flex flex-1 flex-col items-center gap-1">
-                    <span className="text-[9px] tabular-nums text-muted-foreground">{n}</span>
-                    <div
-                      className={cn("w-full min-h-1 rounded-sm", statusBg(code), "opacity-80")}
-                      style={{ height: Math.max(4, (n / trafficMax) * 36) }}
-                    />
-                    <span className={cn("text-[9px] font-mono", statusColor(code))}>{code}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="border-t pt-2.5">
-                <div className="mb-1.5 text-[10px] text-muted-foreground">最近请求</div>
-                <div className="flex flex-col gap-1.5">
-                  {recentTraffic.map((e) => (
-                    <div key={e.id} className="flex items-center gap-1.5 text-[10px]">
-                      <span
-                        className={cn(
-                          "shrink-0 rounded border px-1 py-0 font-mono text-[9px]",
-                          e.method === "GET"
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                            : "border-blue-500/30 bg-blue-500/10 text-blue-400",
-                        )}
-                      >
-                        {e.method}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                        {e.host}
-                        {e.url.replace(/^https?:\/\/[^/]+/, "").substring(0, 30)}
-                      </span>
-                      <span className={cn("shrink-0 font-mono text-[9px]", statusColor(e.status))}>{e.status}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </Card>
-
         {/* 系统状态 & 待审批 */}
         <Card className="p-4">
           <SectionTitle icon={ShieldCheckIcon}>系统状态</SectionTitle>
@@ -1142,21 +1051,6 @@ export default function DashboardPage() {
                 )}
               >
                 {stats?.llm_configured ? "已配置" : "未配置"}
-              </Badge>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2">
-              <div className="text-[10px] text-muted-foreground">流量捕获</div>
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-[10px]",
-                  settings?.traffic_capture
-                    ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
-                    : "text-muted-foreground",
-                )}
-              >
-                {settings?.traffic_capture ? "开启" : "关闭"}
               </Badge>
             </div>
 

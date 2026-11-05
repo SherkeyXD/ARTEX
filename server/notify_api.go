@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -512,4 +513,14 @@ func notifyChannelLookupErr(w http.ResponseWriter, err error) {
 		return
 	}
 	writeErr(w, 500, err.Error())
+}
+
+// queryInt reads an int query param with a default fallback.
+func queryInt(r *http.Request, key string, def int) int {
+	if v := r.URL.Query().Get(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
 }

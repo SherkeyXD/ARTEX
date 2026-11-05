@@ -166,7 +166,7 @@ func TestTaskDeleteCascadeAssets(t *testing.T) {
 		t.Fatalf("exclusive or anchor-only cleanup host missing: %v", deletableHosts)
 	}
 	if deletableSet[sharedDomain] || deletableSet[protectedDomain] {
-		t.Fatalf("shared host was not protected from traffic cleanup: %v", deletableHosts)
+		t.Fatalf("shared host was not protected from cleanup: %v", deletableHosts)
 	}
 
 	findingID, err := d.AddFinding(first.ID, 0, "__task_delete_cascade__", "", SeverityHigh, "summary", "evidence", "tester", []int64{exclusiveID})

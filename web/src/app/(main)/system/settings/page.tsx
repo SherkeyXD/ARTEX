@@ -2,7 +2,7 @@
 
 import * as React from "react";
 
-import { CpuIcon, FlaskConicalIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
+import { CpuIcon, KeyboardIcon, RadioTowerIcon, SearchIcon, ShieldAlertIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -18,8 +18,6 @@ import type { Settings } from "@/lib/types";
 import { UpdateCard } from "./_components/update-card";
 
 export default function SystemSettingsPage() {
-  const [trafficCapture, setTrafficCapture] = React.useState(false);
-  const [agentTrafficBinding, setAgentTrafficBinding] = React.useState(false);
   const [webSearch, setWebSearch] = React.useState(false);
   const [backend, setBackend] = React.useState("ddgs");
   const [braveKeySet, setBraveKeySet] = React.useState(false);
@@ -41,14 +39,10 @@ export default function SystemSettingsPage() {
   // 操作约束注入范围(默认都开)。
   const [injectPlanner, setInjectPlanner] = React.useState(true);
   const [injectWorker, setInjectWorker] = React.useState(true);
-  // 实验功能:noa 上下文压缩(默认关)。
-  const [noaCompaction, setNoaCompaction] = React.useState(false);
   // 纯前端偏好：不走 /api/settings，直接读写 localStorage。
   const sendMode = useChatSendMode();
 
   const apply = React.useCallback((s: Settings) => {
-    setTrafficCapture(!!s.traffic_capture);
-    setAgentTrafficBinding(!!s.agent_traffic_binding);
     setWebSearch(!!s.web_search_enabled);
     setBackend(s.web_search_backend || "ddgs");
     setBraveKeySet(!!s.brave_key_set);
@@ -59,7 +53,6 @@ export default function SystemSettingsPage() {
     setWorkers(String(s.workers ?? 3));
     setInjectPlanner(s.constraints_inject_planner !== false);
     setInjectWorker(s.constraints_inject_worker !== false);
-    setNoaCompaction(!!s.noa_compaction);
   }, []);
 
   const saveWorkers = () => {
@@ -107,16 +100,6 @@ export default function SystemSettingsPage() {
       .finally(() => setLoaded(true));
   }, [apply]);
 
-  const toggleTraffic = (v: boolean) => {
-    setTrafficCapture(v); // optimistic
-    setSaving(true);
-    api
-      .setSettings({ traffic_capture: v })
-      .then(apply)
-      .catch(() => setTrafficCapture(!v)) // revert on failure
-      .finally(() => setSaving(false));
-  };
-
   const toggleInjectPlanner = (v: boolean) => {
     setInjectPlanner(v); // optimistic
     api
@@ -125,42 +108,12 @@ export default function SystemSettingsPage() {
       .catch(() => setInjectPlanner(!v)); // revert on failure
   };
 
-  const toggleAgentTrafficBinding = (v: boolean) => {
-    setAgentTrafficBinding(v);
-    setSaving(true);
-    api
-      .setSettings({ agent_traffic_binding: v })
-      .then((s) => {
-        apply(s);
-        toast.success(v ? "已开启 Agent 自动绑定流量" : "已关闭 Agent 自动绑定流量");
-      })
-      .catch((e) => {
-        setAgentTrafficBinding(!v);
-        toast.error(`保存失败：${(e as Error).message}`);
-      })
-      .finally(() => setSaving(false));
-  };
-
   const toggleInjectWorker = (v: boolean) => {
     setInjectWorker(v); // optimistic
     api
       .setSettings({ constraints_inject_worker: v })
       .then(apply)
       .catch(() => setInjectWorker(!v)); // revert on failure
-  };
-
-  const toggleNoaCompaction = (v: boolean) => {
-    setNoaCompaction(v); // optimistic
-    api
-      .setSettings({ noa_compaction: v })
-      .then((s) => {
-        apply(s);
-        toast.success(v ? "已开启 noa 上下文压缩（对之后启动的运行生效）" : "已关闭 noa 上下文压缩（恢复内置压缩）");
-      })
-      .catch((e) => {
-        setNoaCompaction(!v); // revert on failure
-        toast.error(`保存失败：${(e as Error).message}`);
-      });
   };
 
   // Persist a web-search patch (enable and/or backend). Optimistic with refetch.
@@ -272,61 +225,6 @@ export default function SystemSettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
               <RadioTowerIcon className="size-4" />
-              流量捕获
-            </CardTitle>
-            <CardDescription>
-              开启后，所有 Agent 的 HTTP 流量经记录代理全量落库，并向 Agent 注入 traffic_search / traffic_get
-              工具与代理配置（提示词含代理说明）。
-              <br />
-              关闭（默认）时不记录任何流量：Agent
-              <b>不会</b>拿到代理配置与流量工具，提示词也<b>不含</b>代理相关内容。切换后会即时重建 Agent 生效。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="traffic-capture" className="text-sm font-normal text-muted-foreground">
-              {trafficCapture ? "已开启 · 正在记录流量并注入代理" : "已关闭 · 不记录、不注入代理"}
-            </Label>
-            <Switch
-              id="traffic-capture"
-              checked={trafficCapture}
-              disabled={!loaded || saving}
-              onCheckedChange={toggleTraffic}
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="mb-4 break-inside-avoid md:mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <RadioTowerIcon className="size-4" />
-              Agent 自动绑定流量
-            </CardTitle>
-            <CardDescription id="agent-traffic-binding-description">
-              默认关闭。开启后，漏洞入库时触发的报告 Agent 会核对已有 HTTP 请求/响应，关联对应流量后再编写报告。
-              <b>查阅数据包及额外的工具调用会增加 Token 消耗。</b>
-              <br />
-              TCP、未抓包或没有匹配流量时仍可正常上报。此开关不影响流量捕获、人工绑定及已保存证据的查看。 对下一轮 Agent
-              生效；关闭后会立即拒绝新的自动绑定。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="agent-traffic-binding" className="text-sm font-normal text-muted-foreground">
-              {agentTrafficBinding ? "已开启 · 会增加 Token 消耗" : "已关闭 · 可继续人工绑定"}
-            </Label>
-            <Switch
-              id="agent-traffic-binding"
-              aria-describedby="agent-traffic-binding-description"
-              checked={agentTrafficBinding}
-              disabled={!loaded || saving}
-              onCheckedChange={toggleAgentTrafficBinding}
-            />
-          </CardContent>
-        </Card>
-
-        <Card className="mb-4 break-inside-avoid md:mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <RadioTowerIcon className="size-4" />
               全局代理
             </CardTitle>
             <CardDescription>
@@ -401,34 +299,6 @@ export default function SystemSettingsPage() {
                 onCheckedChange={toggleInjectWorker}
               />
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="mb-4 break-inside-avoid md:mb-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FlaskConicalIcon className="size-4" />
-              实验功能
-            </CardTitle>
-            <CardDescription>
-              尚在验证中的机制，默认关闭。可能改变 Agent 行为或影响稳定性，请在了解影响后启用。
-              <br />
-              <b>noa 上下文压缩</b>：由模型主动压缩长对话历史（norma v0.4.0）。开启后平台接入的四类 Agent（
-              <b>规划者 / 执行者 / 主 Agent / 对话</b>）改用 noa 接管上下文，取代内置压缩，
-              压缩原文会归档到任务工作目录下便于回溯。切换即时生效（对之后启动的运行生效），无需重建 Agent；
-              关闭后立即恢复内置压缩。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex items-center justify-between gap-4">
-            <Label htmlFor="noa-compaction" className="text-sm font-normal text-muted-foreground">
-              noa 上下文压缩{noaCompaction ? " · 已开启" : " · 已关闭"}
-            </Label>
-            <Switch
-              id="noa-compaction"
-              checked={noaCompaction}
-              disabled={!loaded}
-              onCheckedChange={toggleNoaCompaction}
-            />
           </CardContent>
         </Card>
 

@@ -734,7 +734,7 @@ export function OverviewTab({ taskId }: { taskId: string }) {
           </CardContent>
         </Card>
       )}
-      {/* LLM Token 用量：按模型分组，数据来自 llm_records（需开启 LLM 录制）。 */}
+      {/* LLM Token 用量：按模型分组，数据来自 llm_usage 计量账本。 */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">

@@ -1,7 +1,7 @@
 // Rich mock dataset for the Vercel demo (NEXT_PUBLIC_MOCK=1). Shapes track the
 // current backend contract in lib/api.ts + lib/types.ts. All data is static and
 // self-consistent (one company "Acme", a few tasks, findings, exploration graph,
-// sessions/activity, traffic, agents, etc.) so every page looks populated.
+// sessions/activity, agents, etc.) so every page looks populated.
 
 import type {
   Activity,
@@ -22,7 +22,6 @@ import type {
   InterceptRule,
   LLMPoolStatus,
   LLMProfile,
-  LLMTask,
   MCPServer,
   MCPTool,
   MissingSkill,
@@ -40,9 +39,6 @@ import type {
   TokenTotal,
   TokenUsage,
   Tool,
-  TrafficDetail,
-  TrafficHost,
-  TrafficResp,
 } from "@/lib/types";
 
 const T = (iso: string) => iso; // readability helper for timestamps
@@ -2858,75 +2854,6 @@ export const convTokens: ConvTokenSummary[] = [
   },
 ];
 
-// ── Traffic ──────────────────────────────────────────────────────────────────
-const exchanges = [
-  ["x-1", "www.acme.com", "GET", "https://www.acme.com/", 200, "text/html", 48213],
-  ["x-2", "www.acme.com", "GET", "https://www.acme.com/search?q=test", 200, "text/html", 5120],
-  ["x-3", "www.acme.com", "GET", "https://www.acme.com/.git/HEAD", 200, "text/plain", 23],
-  ["x-4", "admin.acme.com", "GET", "https://admin.acme.com/login", 200, "text/html", 12044],
-  ["x-5", "admin.acme.com", "POST", "https://admin.acme.com/login", 302, "text/html", 0],
-  ["x-6", "admin.acme.com", "GET", "https://admin.acme.com/dashboard", 200, "text/html", 33120],
-  ["x-7", "admin.acme.com", "GET", "https://admin.acme.com/api/users?page=1", 200, "application/json", 8842],
-  ["x-8", "api.acme.com", "GET", "https://api.acme.com/v1/orders?id=1001", 200, "application/json", 640],
-  ["x-9", "api.acme.com", "GET", "https://api.acme.com/v1/orders?id=1002", 200, "application/json", 655],
-  ["x-10", "api.acme.com", "GET", "https://api.acme.com/v1/users/me", 200, "application/json", 312],
-  ["x-11", "api.acme.com", "GET", "https://api.acme.com/v1/admin", 401, "application/json", 45],
-  ["x-12", "shop.acme.com", "GET", "https://shop.acme.com/checkout", 200, "text/html", 21990],
-  ["x-13", "shop.acme.com", "POST", "https://shop.acme.com/pay", 200, "application/json", 128],
-  ["x-14", "www.acme.com", "GET", "https://www.acme.com/robots.txt", 200, "text/plain", 88],
-  ["x-15", "shop.acme.com", "POST", "https://shop.acme.com/api/import", 500, "application/json", 2048],
-  ["x-16", "shop.acme.com", "POST", "https://shop.acme.com/api/import", 200, "application/json", 0],
-  ["x-17", "10.10.10.20", "GET", "http://10.10.10.20:8080/script", 200, "text/html", 14200],
-  ["x-18", "10.10.10.20", "POST", "http://10.10.10.20:8080/scriptText", 200, "text/plain", 86],
-  ["x-19", "10.10.10.10", "POST", "https://10.10.10.10:445/psexec", 200, "application/octet-stream", 0],
-] as const;
-
-export const traffic: TrafficResp = {
-  enabled: true,
-  proxy: ":8788",
-  count: exchanges.length,
-  total: exchanges.length,
-  page: 0,
-  size: 100,
-  exchanges: exchanges.map(([id, host, method, url, status, ct, len], i) => ({
-    id,
-    host,
-    method,
-    url,
-    status,
-    content_type: ct,
-    resp_len: len,
-    ts: T(`2026-07-26T0${1 + (i % 3)}:${String(10 + i).padStart(2, "0")}:00Z`),
-  })),
-};
-
-// Distinct hosts with counts, derived from the exchanges above (target picker).
-const hostCounts: Record<string, number> = {};
-for (const [, host] of exchanges) hostCounts[host] = (hostCounts[host] ?? 0) + 1;
-export const trafficHosts: TrafficHost[] = Object.entries(hostCounts).map(([host, count]) => ({ host, count }));
-
-export const trafficDetail: TrafficDetail = {
-  req: `GET /v1/orders?id=1002 HTTP/1.1
-Host: api.acme.com
-Authorization: Bearer eyJhbGciOiJIUzI1NiJ9...
-User-Agent: ARTEX-worker/1.0
-Accept: application/json
-
-`,
-  resp: `HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: 655
-
-{
-  "order_id": 1002,
-  "user_id": 77,
-  "amount": 1299.00,
-  "address": "北京市朝阳区 ****",
-  "phone": "138****6021",
-  "items": [{ "sku": "A-100", "qty": 1 }]
-}`,
-};
-
 // ── Security / Audit ─────────────────────────────────────────────────────────
 export const audit: Audit = {
   attributions: { allow: 312, block: 9 },
@@ -3324,9 +3251,6 @@ export const tools: Tool[] = [
 
 // ── Settings ─────────────────────────────────────────────────────────────────
 export const settings: Settings = {
-  traffic_capture: true,
-  agent_traffic_binding: false,
-  llm_record: false,
   web_search_enabled: true,
   web_search_backend: "ddgs",
   brave_key_set: false,
@@ -3337,7 +3261,6 @@ export const settings: Settings = {
   workers: 3,
   llm_pool_enabled: true,
   llm_pool_bind_fallback: false,
-  noa_compaction: false,
 };
 
 // ── LLM 轮询（故障转移）──────────────────────────────────────────────────────
@@ -4084,140 +4007,3 @@ export const commandRecords = [
     created_at: T("2026-08-09T02:20:00Z"),
   },
 ];
-
-// ── LLM 录制（/llm/records、/llm/records/{id}）──
-export const llmRecords = [
-  {
-    id: 1,
-    ts: T("2026-08-09T02:10:02Z"),
-    model: "claude-opus-4-8",
-    profile_name: "默认",
-    session_id: "exp1-worker-i12",
-    task_id: "t-001",
-    worker: "worker-1",
-    latency_ms: 3210,
-    input_tokens: 8421,
-    output_tokens: 512,
-    cache_read: 6000,
-    cache_write: 1200,
-    status: "ok",
-  },
-  {
-    id: 2,
-    ts: T("2026-08-09T02:11:40Z"),
-    model: "claude-opus-4-8",
-    profile_name: "默认",
-    session_id: "exp1-planner",
-    task_id: "t-001",
-    worker: "planner",
-    latency_ms: 4180,
-    input_tokens: 12044,
-    output_tokens: 733,
-    cache_read: 9000,
-    cache_write: 1500,
-    status: "ok",
-  },
-  {
-    id: 3,
-    ts: T("2026-08-09T02:15:20Z"),
-    model: "claude-opus-4-8",
-    profile_name: "默认",
-    session_id: "exp1-worker-i18",
-    task_id: "t-001",
-    worker: "worker-2",
-    latency_ms: 2890,
-    input_tokens: 7311,
-    output_tokens: 421,
-    cache_read: 5200,
-    cache_write: 900,
-    status: "ok",
-  },
-  {
-    id: 4,
-    ts: T("2026-08-09T02:16:05Z"),
-    model: "claude-opus-4-8",
-    profile_name: "默认",
-    session_id: "exp1-worker-i18",
-    task_id: "t-001",
-    worker: "worker-2",
-    latency_ms: 900,
-    input_tokens: 7600,
-    output_tokens: 0,
-    cache_read: 5200,
-    cache_write: 0,
-    status: "error",
-    error: "429 Too Many Requests（已退避重试）",
-  },
-];
-
-// Distinct tasks with counts, derived from llmRecords above (task picker).
-const llmTaskCounts: Record<string, number> = {};
-for (const r of llmRecords) if (r.task_id) llmTaskCounts[r.task_id] = (llmTaskCounts[r.task_id] ?? 0) + 1;
-export const llmTasks: LLMTask[] = Object.entries(llmTaskCounts).map(([task_id, count]) => ({ task_id, count }));
-
-export function llmRecordDetail(id: number, records = llmRecords) {
-  const item = records.find((r) => r.id === id) ?? records[0];
-  return {
-    ...item,
-    request_body: JSON.stringify(
-      {
-        model: item.model,
-        system: "你是一个授权渗透测试系统的「执行者」…（省略）",
-        messages: [{ role: "user", content: "开始执行 system 提示里的这条意图：只做它、只产生事实、做完即停。" }],
-        tools: ["bash", "insert_assets", "record_fact", "report_finding"],
-      },
-      null,
-      2,
-    ),
-    response_body: JSON.stringify(
-      {
-        stop_reason: item.status === "error" ? "error" : "tool_use",
-        content: [
-          { type: "text", text: "对 search?q= 做注入探测，先用报错型 payload 验证。" },
-          { type: "tool_use", name: "bash", input: { command: "curl -s 'https://www.acme.com/search?q=1%27'" } },
-        ],
-        usage: { input_tokens: item.input_tokens, output_tokens: item.output_tokens },
-      },
-      null,
-      2,
-    ),
-    // HTTP 原文：请求含被归一化视图丢弃的完整工具 schema，响应为原始 SSE 帧。
-    raw_request: JSON.stringify({
-      model: item.model,
-      max_tokens: 8192,
-      stream: true,
-      system: [
-        { type: "text", text: "你是一个授权渗透测试系统的「执行者」…（省略）", cache_control: { type: "ephemeral" } },
-      ],
-      messages: [{ role: "user", content: "开始执行 system 提示里的这条意图：只做它、只产生事实、做完即停。" }],
-      tools: [
-        {
-          name: "bash",
-          description: "在目标环境中执行一条 shell 命令并返回其输出。",
-          input_schema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
-        },
-      ],
-      thinking: { type: "enabled" },
-    }),
-    raw_response: [
-      `event: message_start`,
-      `data: {"type":"message_start","message":{"id":"msg_01mock","model":"${item.model}","usage":{"input_tokens":${item.input_tokens},"output_tokens":1}}}`,
-      ``,
-      `event: content_block_delta`,
-      `data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"对 search?q= 做注入探测。"}}`,
-      ``,
-      `event: content_block_start`,
-      `data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01mock","name":"bash"}}`,
-      ``,
-      `event: content_block_delta`,
-      `data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"command\\":\\"curl -s 'https://www.acme.com/search?q=1%27'\\"}"}}`,
-      ``,
-      `event: message_delta`,
-      `data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":${item.output_tokens}}}`,
-      ``,
-      `event: message_stop`,
-      `data: {"type":"message_stop"}`,
-      ``,
-    ].join("\n"),
-  };
-}

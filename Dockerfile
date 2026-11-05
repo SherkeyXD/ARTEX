@@ -40,6 +40,6 @@ RUN chmod +x /app/artex /app/start.sh
 COPY skills/ /app/skills/
 # data/（SQLite + jwt.key）持久化点
 VOLUME ["/app/data"]
-EXPOSE 8787 8788
+EXPOSE 8787
 ENTRYPOINT ["/app/start.sh"]
-CMD ["-addr", ":8787", "-proxy", ":8788"]
+CMD ["-addr", ":8787"]

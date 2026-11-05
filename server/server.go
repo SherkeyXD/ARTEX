@@ -23,12 +23,9 @@ import (
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
 	"github.com/Autumn-27/artex/llmpool"
-	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/report"
-	"github.com/Autumn-27/artex/traffic"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // BuildVersion is the backend application version, injected from cmd/artex at
@@ -59,7 +56,7 @@ type Server struct {
 	llmDirect llm.Provider // concrete global provider, before any failover pool
 	llmCfg    agent.Config // current LLM config (key not exposed)
 	llmOn     bool
-	llmProf   string // active LLM profile name (for llmrec tagging)
+	llmProf   string // active LLM profile name
 
 	// chatBusy guards the per-task main-agent run: the chat handler launches the
 	// agent on the server's background ctx (not the request ctx) and returns
@@ -217,7 +214,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 			}
 			return a.TaskTimeoutWrapupMaxTurns, true
 		}
-		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 流量/编排 host 工具装配进 agent 工具集
+		wireAgentAugment(m.pg, s.skillDir, s.hostTools) // 可见 skills/MCP + 编排/平台 host 工具装配进 agent 工具集
 		domainReg := buildDomainReg(m.Assets())
 		wireTools(m.pg, domainReg) // 内置工具表：按 agent 过滤 + 覆盖描述/schema + 注入默认值
 		seedPrompts(m.pg)          // 内置 agent 默认提示词正文播种进 agent_prompts(仅空时)
@@ -225,8 +222,7 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 		if err := s.seedFindingRetester(); err != nil {
 			log.Printf("[retester] seed: %v", err)
 		}
-		go s.evidenceStore().RunGC(s.ctx)
-		s.seedPythonInterpreter()     // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
+		s.seedPythonInterpreter() // 自定义脚本工具:开机检测 python 解释器入库(仅空时)
 		go newScheduler(s).Run(s.ctx) // P3 触发器调度(定时/finding/目标事件),仅自定义 agent
 		// 漏洞 IM 推送投递引擎。与 Scheduler 并列但独立：推送的实时性要求(3s)
 		// 与触发器的业务节奏不同，且两者失败互不牵连——推送卡住不该影响 agent 触发。
@@ -444,7 +440,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 		s.cfgMu.Lock()
 		profName := s.llmProf
 		s.cfgMu.Unlock()
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, profName, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, 0, profName)
 	}
 	s.cfgMu.Lock()
@@ -460,7 +455,6 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	// (agentsForTask), resolved through the engine's authoritative resolver. Global
 	// readiness (Ready()/llm_configured) is reported from s.llmOn, set below.
 
-	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
 	win := cfg.CompactionWindow()
 	// chat stays the GLOBAL fallback since one ChatAgent serves many agent keys — its
 	// per-agent binding is resolved at Chat time (runConversationSync →
@@ -469,13 +463,11 @@ func (s *Server) applyLLM(cfg agent.Config) error {
 	s.cfgMu.Lock()
 	// chat agent serves MANY custom agents by key → it holds the GLOBAL opts
 	// (backend/key) and gates Enabled per-conversation-agent at Chat time. 对话始终用激活配置。
-	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, tx, win) // chat page runner
-	s.chatAgent.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	s.chatAgent = agent.NewChatAgent(prov, cfg.Model, s.m.dir, win) // chat page runner
 	s.chatAgent.SetWebSearch(s.m.WebSearchOpts())
 	s.chatAgent.SetGuard(s.chatGuard())
 	s.chatAgent.SetNonStreaming(nonStreamingResolver(cfg))
 	s.chatAgent.SetMaxTokens(maxTokensResolver(cfg))
-	s.chatAgent.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.llmProv = prov
 	s.llmCfg = cfg
 	s.llmOn = true
@@ -578,7 +570,6 @@ func (s *Server) providerForProfile(id int64) (llm.Provider, agent.Config, bool)
 	}
 	// Wrap with recorder, tagged with this profile's name.
 	if p, _ := s.m.pg.ProfileByID(id); p != nil {
-		prov = llmrec.Wrap(prov, s.m.PG(), cfg.Model, p.Name, cfg.ThinkingType, cfg.ReasoningEffort, s.m.LLMRecordEnabled)
 		prov = bindSideProvider(prov, cfg, id, p.Name)
 	}
 	s.provCacheMu.Lock()
@@ -609,14 +600,11 @@ func (s *Server) chatAgentForProfile(id int64) *agent.ChatAgent {
 	if !ok {
 		return nil
 	}
-	tx := transcript.NewStore(filepath.Join(s.m.dir, "transcripts"))
-	ca := agent.NewChatAgent(s.poolForBinding(id, prov, cfg), cfg.Model, s.m.dir, tx, cfg.CompactionWindow())
-	ca.SetProxy(s.m.ProxyAddr(), s.m.ProxyCACert())
+	ca := agent.NewChatAgent(s.poolForBinding(id, prov, cfg), cfg.Model, s.m.dir, cfg.CompactionWindow())
 	ca.SetWebSearch(s.m.WebSearchOpts())
 	ca.SetGuard(s.chatGuard())
 	ca.SetNonStreaming(nonStreamingResolver(cfg))
 	ca.SetMaxTokens(maxTokensResolver(cfg))
-	ca.SetNoaEnabled(s.m.NoaCompactionEnabled) // 实验功能:noa 上下文压缩(每 run 读)
 	s.profMu.Lock()
 	if ex := s.profChatAgents[id]; ex != nil { // lost the race → keep the winner
 		ca = ex
@@ -758,7 +746,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/exploration/findings/asset-tree", s.findingAssetTree)
 	mux.HandleFunc("GET /api/exploration/findings/stats", s.findingStats)
 	mux.HandleFunc("GET /api/exploration/findings/export", s.findingsExport)
-	s.registerFindingTraffic(mux)
 	mux.HandleFunc("GET /api/exploration/findings/{id}", s.getFinding)
 	mux.HandleFunc("GET /api/exploration/findings/{id}/lineage", s.findingLineage)
 	mux.HandleFunc("POST /api/exploration/findings/{id}/deepen", s.deepenFinding)
@@ -783,20 +770,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/audit", s.getAudit)
 	mux.HandleFunc("POST /api/gc", s.gc)
-	mux.HandleFunc("GET /api/traffic", s.getTraffic)
-	mux.HandleFunc("GET /api/traffic/hosts", s.getTrafficHosts)
-	mux.HandleFunc("DELETE /api/traffic", s.deleteTraffic)
-	mux.HandleFunc("DELETE /api/traffic/hosts", s.deleteTrafficHosts)
-	mux.HandleFunc("DELETE /api/traffic/all", s.deleteAllTraffic)
-	mux.HandleFunc("GET /api/traffic/exchange", s.getTrafficExchange)
-	mux.HandleFunc("GET /api/traffic/blob", s.getTrafficBlob)
 	mux.HandleFunc("GET /api/commands", s.pgListCommands)
 	mux.HandleFunc("GET /api/commands/stats", s.pgToolStats) // 按工具聚合调用次数
-	mux.HandleFunc("GET /api/llm/records", s.pgListLLMRecords)
-	mux.HandleFunc("DELETE /api/llm/records", s.pgDeleteLLMRecords)
-	mux.HandleFunc("GET /api/llm/records/tasks", s.pgLLMTasks)
 	mux.HandleFunc("GET /api/llm/records/by-model", s.pgTokenByModel) // 按模型聚合本任务 token 用量
-	mux.HandleFunc("GET /api/llm/records/{id}", s.pgGetLLMRecord)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	// 漏洞 IM 推送。渠道是「多实例 + 各自过滤规则」的资源，因此独立成一组
@@ -868,12 +844,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/mcp/{id}", s.pgDeleteMCP)
 	mux.HandleFunc("GET /api/mcp/{id}/tools", s.pgMCPTools)
 	mux.HandleFunc("POST /api/mcp/{id}/refresh", s.pgRefreshMCP)
-	// 资产同步 — ScopeSentry 数据源
-	mux.HandleFunc("GET /api/sync/scopesentry/status", s.syncSSStatus)
-	mux.HandleFunc("POST /api/sync/scopesentry/datasource", s.syncSSDatasource)
-	mux.HandleFunc("GET /api/sync/scopesentry/projects", s.syncSSProjects)
-	mux.HandleFunc("GET /api/sync/scopesentry/tasks", s.syncSSTasks)
-	mux.HandleFunc("POST /api/sync/scopesentry/sync", s.syncSSRun)
 	// Skill CRUD (文件系统)
 	mux.HandleFunc("GET /api/skills", s.fsListSkills)
 	mux.HandleFunc("POST /api/skills", s.fsCreateSkill)
@@ -952,11 +922,6 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
 	out["engine_mode"] = "idle"              // spec enum; overridden below when a task is active
 	out["llm_configured"] = s.engine.Ready() // is an LLM provider installed at all
-	if tr := s.m.Traffic(); tr != nil {
-		c, _ := tr.Count()
-		out["traffic"] = c
-		out["traffic_enabled"] = true
-	}
 	if counts, err := s.m.Assets().CountsByType(); err == nil {
 		total := 0
 		for _, n := range counts {
@@ -2144,10 +2109,6 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(stage)
-	if err = s.evidenceStore().StageFindingsExport(r.Context(), fs, stage, format == "md-zip"); err != nil {
-		evidenceError(w, err)
-		return
-	}
 	now := time.Now()
 	stamp := now.Format("20060102-150405")
 	setDownload := func(contentType, filename string) {
@@ -2161,7 +2122,7 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(report.FindingsMarkdown(fs, now)))
 	case "md-zip":
 		path := filepath.Join(stage, "findings.zip")
-		if err := buildFindingsEvidenceZip(path, fs, stage, now); err != nil {
+		if err := buildFindingsEvidenceZip(path, fs, now); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -2180,10 +2141,6 @@ func (s *Server) findingsExport(w http.ResponseWriter, r *http.Request) {
 		assets := s.resolveFindingAssets(fs)
 		out := make([]FindingDTO, 0, len(fs))
 		for _, f := range fs {
-			for i := range f.TrafficBindings {
-				f.TrafficBindings[i].Snapshot.ReqHead = ""
-				f.TrafficBindings[i].Snapshot.RespHead = ""
-			}
 			out = append(out, findingFromDB(f, assets))
 		}
 		setDownload("application/json; charset=utf-8", "findings-"+stamp+".json")
@@ -3098,186 +3055,6 @@ func taskActivityDetail(t *Task, seq int64) (string, error) {
 	return t.Store.ActivityDetailWithSources(seq)
 }
 
-func (s *Server) getTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeJSON(w, 200, map[string]any{"enabled": false, "exchanges": []any{}})
-		return
-	}
-	q := r.URL.Query()
-	page := atoiDefault(q.Get("page"), 0)
-	size := atoiDefault(q.Get("size"), 100)
-	ex, matched, _ := tr.Page(traffic.PageQuery{
-		Host:    q.Get("host"),
-		Method:  q.Get("method"),
-		Query:   q.Get("q"),
-		Body:    q.Get("body"),
-		Path:    q.Get("path"),
-		Status:  q.Get("status"),
-		RespMin: int64(atoiDefault(q.Get("resp_min"), -1)),
-		RespMax: int64(atoiDefault(q.Get("resp_max"), -1)),
-		Sort:    q.Get("sort"),
-		Order:   q.Get("order"),
-	}, page, size)
-	count, _ := tr.Count() // global total, for the stat card
-	writeJSON(w, 200, map[string]any{
-		"enabled":   s.m.TrafficEnabled(), // reflect the capture toggle
-		"proxy":     s.m.ProxyAddr(),
-		"count":     count,   // total recorded (unfiltered)
-		"total":     matched, // rows matching the current filter (for pagination)
-		"page":      page,
-		"size":      size,
-		"exchanges": trafficDTOs(ex),
-	})
-}
-
-// getTrafficHosts returns distinct recorded hosts with counts, for the page's
-// target picker (pick a host → filter the list, then delete it).
-func (s *Server) getTrafficHosts(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeJSON(w, 200, map[string]any{"hosts": []any{}})
-		return
-	}
-	hosts, err := tr.Hosts()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"hosts": hosts})
-}
-
-// deleteTraffic removes recorded traffic for every host containing the query's
-// host substring (the page's host filter is substring-based, so what you
-// filtered is what gets deleted): index rows + each host's file tree, then
-// garbage-collects blobs no remaining exchange references. Empty host → 400.
-// Returns the number of exchanges deleted.
-func (s *Server) deleteTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	host := strings.TrimSpace(r.URL.Query().Get("host"))
-	if host == "" {
-		writeErr(w, 400, "missing host")
-		return
-	}
-	n, err := tr.DeleteHost(host)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n})
-}
-
-// deleteTrafficHosts removes traffic for a set of EXACT hosts (JSON body
-// {"hosts": [...]}) — the batch path for the page's multi-select delete. Exact
-// match, so picking "api.example.com" never sweeps "api.example.com.cn".
-// Returns the number of exchanges deleted.
-func (s *Server) deleteTrafficHosts(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	var req struct {
-		Hosts []string `json:"hosts"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, 400, "invalid body")
-		return
-	}
-	hosts := make([]string, 0, len(req.Hosts))
-	for _, h := range req.Hosts {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
-		}
-	}
-	if len(hosts) == 0 {
-		writeErr(w, 400, "missing hosts")
-		return
-	}
-	n, err := tr.DeleteHostsExact(hosts)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n})
-}
-
-// deleteAllTraffic purges every recorded exchange, then compacts the index so
-// the space is actually returned to the filesystem — an emptied index is the one
-// moment a full rewrite is cheap. Evidence already bound to a finding lives in
-// the evidence store and is deliberately left alone. Returns the number of
-// exchanges deleted and the bytes of index reclaimed.
-func (s *Server) deleteAllTraffic(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	n, reclaimed, err := tr.DeleteAll()
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"deleted": n, "reclaimed": reclaimed})
-}
-
-// getTrafficExchange returns the full raw request/response of one exchange,
-// read on demand from the traffic tree (bodies are not in the paged list).
-func (s *Server) getTrafficExchange(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		writeErr(w, 400, "missing id")
-		return
-	}
-	req, resp, err := tr.Get(id)
-	if err != nil {
-		writeErr(w, 404, err.Error())
-		return
-	}
-	writeJSON(w, 200, map[string]any{"req": req, "resp": resp})
-}
-
-// getTrafficBlob streams one oversized body by its sha256. Bodies past the inline
-// threshold are not carried by the exchange endpoint — it returns a preview plus
-// an "@blob sha256:<hash>" pointer — so this is how the UI fetches them whole.
-// Streamed rather than buffered: these are the bodies too large to hold in memory.
-func (s *Server) getTrafficBlob(w http.ResponseWriter, r *http.Request) {
-	tr := s.m.Traffic()
-	if tr == nil {
-		writeErr(w, 404, "traffic disabled")
-		return
-	}
-	hash := strings.TrimSpace(r.URL.Query().Get("hash"))
-	if hash == "" {
-		writeErr(w, 400, "missing hash")
-		return
-	}
-	f, size, err := tr.Blob(hash)
-	if err != nil {
-		writeErr(w, 404, err.Error())
-		return
-	}
-	defer f.Close()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", hash+".bin"))
-	if _, err := io.Copy(w, f); err != nil {
-		log.Printf("[traffic] 下载 blob %s 中断：%v", hash, err)
-	}
-}
-
-// getSettings returns the runtime app settings the UI toggles. The Brave API key
-// is returned as a boolean presence flag (brave_key_set), never the value itself,
-// so the UI can show "configured" without echoing the secret back.
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, s.settingsPayload())
 }
@@ -3290,9 +3067,6 @@ func (s *Server) settingsPayload() map[string]any {
 		concLimit = defaultConcurrencyLimit // 关闭时也回显一个合理默认值给 UI
 	}
 	return map[string]any{
-		"traffic_capture":          s.m.TrafficEnabled(),
-		"agent_traffic_binding":    s.m.pg.GetBool(settingAgentTrafficBinding, false),
-		"llm_record":               s.m.LLMRecordEnabled(),
 		"web_search_enabled":       on,
 		"web_search_backend":       backend,
 		"brave_key_set":            strings.TrimSpace(braveKey) != "",
@@ -3310,9 +3084,6 @@ func (s *Server) settingsPayload() map[string]any {
 		// 操作约束注入范围(默认都开):把本任务的 allow/deny 约束拼进对应 agent 的系统提示。
 		"constraints_inject_planner": s.constraintInjectPlanner(),
 		"constraints_inject_worker":  s.constraintInjectWorker(),
-		// 实验功能:noa 模型驱动上下文压缩(默认关)。开启后平台接入的四类 agent 由 noa
-		// 接管上下文压缩,取代内置 compaction;每 run 读一次,对之后启动的 run 生效。
-		"noa_compaction": s.m.NoaCompactionEnabled(),
 		// 漏洞 IM 推送的全局项。渠道本身是独立资源，走 /api/notify/* 管理；
 		// 这里只放「作用于全部渠道」的三项。
 		"notify_enabled":             s.m.pg.GetBool(settingNotifyEnabled, true),
@@ -3355,14 +3126,9 @@ func (s *Server) pgDetectPython(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"python_interpreter": p})
 }
 
-// putSettings applies a settings change. Toggling traffic_capture rebuilds the
-// agents (applyLLM) so the new proxy/traffic-tools/prompt state takes hold — when
-// off, agents get no proxy config, no traffic tools, and no proxy prompt content.
+// putSettings applies a settings change.
 func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TrafficCapture      *bool `json:"traffic_capture"`
-		AgentTrafficBinding *bool `json:"agent_traffic_binding"`
-		LLMRecord           *bool `json:"llm_record"` // LLM 录制开关（默认关）；即时生效，无需重建 agent
 		// Web search. WebSearchEnabled/Backend toggle the tool + backend; BraveKey/TavilyKey
 		// are optional — omit (null) to leave a stored key untouched, send "" to clear.
 		WebSearchEnabled *bool   `json:"web_search_enabled"`
@@ -3383,8 +3149,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// 操作约束注入范围开关(默认都开);即时生效(planner/worker 每轮读),无需重建 agent。
 		ConstraintsInjectPlanner *bool `json:"constraints_inject_planner"`
 		ConstraintsInjectWorker  *bool `json:"constraints_inject_worker"`
-		// 实验功能:noa 上下文压缩开关(默认关);每 run 读,对之后启动的 run 生效,无需重建 agent。
-		NoaCompaction *bool `json:"noa_compaction"`
 		// 漏洞 IM 推送的全局项。三者都由投递引擎每轮读一次，改完即时生效，
 		// 不需要重建 agent 或重启。
 		NotifyEnabled    *bool   `json:"notify_enabled"`
@@ -3403,13 +3167,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConstraintsInjectWorker != nil {
 		if err := s.m.pg.SetBool(settingConstraintsInjectWorker, *req.ConstraintsInjectWorker); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.NoaCompaction != nil {
-		// 每 run 读的解析器,切换即时对之后启动的 run 生效,无需 applyLLM 重建。
-		if err := s.m.SetNoaCompaction(*req.NoaCompaction); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}
@@ -3477,13 +3234,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.LLMRecord != nil {
-		// 录制器每次调用读取该标志，切换即时生效，无需 applyLLM 重建。
-		if err := s.m.SetLLMRecordEnabled(*req.LLMRecord); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
 	changed := false
 	if req.LLMPoolEnabled != nil {
 		if err := s.m.SetLLMPoolEnabled(*req.LLMPoolEnabled); err != nil {
@@ -3503,19 +3253,6 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		// Pinned tasks' planner/worker and per-profile chat agents hold providers
 		// built under the OLD switch state — drop them so they pick up the new one.
 		s.invalidateProfileAgents()
-	}
-	if req.AgentTrafficBinding != nil {
-		if err := s.m.pg.SetBool(settingAgentTrafficBinding, *req.AgentTrafficBinding); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-	}
-	if req.TrafficCapture != nil {
-		if err := s.m.SetTrafficEnabled(*req.TrafficCapture); err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-		changed = true
 	}
 	if req.GlobalProxy != nil {
 		// Validation failure (bad scheme/host) is a client error, not a 500.

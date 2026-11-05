@@ -6,14 +6,13 @@ import (
 	"time"
 )
 
-// LLMUsage is one lightweight LLM-call metering row — the always-on usage ledger,
-// distinct from llm_records (which stores full request/response bodies and is a
-// gated debug feature). One row per completion call, written on both success and
-// error, so token accounting is complete even for interrupted/failed runs. Carries
-// only the dimensions needed to slice token spend (model / profile / task / agent),
+// LLMUsage is one lightweight LLM-call metering row — the always-on usage ledger.
+// One row per completion call, written on both success and error, so token
+// accounting is complete even for interrupted/failed runs. Carries only the
+// dimensions needed to slice token spend (model / profile / task / agent),
 // never any prompt or response content.
 type LLMUsage struct {
-	TaskID        string `json:"task_id"`        // task registry id (matches llm_records.task_id)
+	TaskID        string `json:"task_id"`        // task registry id
 	ExplorationID int64  `json:"exploration_id"` // exploration id parsed from the session (0 = unknown/non-task)
 	Worker        string `json:"worker"`         // agent lane: worker / planner / mainagent / goals
 	Model         string `json:"model"`

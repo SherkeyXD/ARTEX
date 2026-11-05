@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
@@ -10,7 +9,6 @@ import (
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 // MainAgent is the thin human-interface orchestrator (docs §4.2 / §7). The human
@@ -18,27 +16,17 @@ import (
 // (→planner) or direct high-priority intents (→frontier). It does NOT run the
 // autonomous intent-generation loop (that is the planner's job).
 type MainAgent struct {
-	findingRecorder FindingRecorder
 	prov            llm.Provider
 	model           string
-	tx              *transcript.Store                      // raw LLM conversation persistence (nil = off)
 	window          int                                    // context window in tokens (for compaction)
 	windowFn        func() int                             // optional dynamic task-chain minimum
 	maxTurns        int                                    // max agent turns per run (0 = unlimited)
-	proxyAddr       string                                 // recording proxy for WebFetch (empty = direct)
-	proxyCACert     string                                 // recording proxy's CA cert path (HTTPS verify)
 	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
 	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
 	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
 	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	noaEnabledFn    func() bool                            // resolver: use experimental noa compaction? (nil = off)
 	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 }
-
-// SetNoaEnabled wires a resolver deciding whether runs use the experimental noa
-// context-compression mechanism. nil/unset = off (built-in compaction). Read per
-// run so the settings toggle takes effect without rebuilding the agent.
-func (m *MainAgent) SetNoaEnabled(fn func() bool) { m.noaEnabledFn = fn }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
 // model path (true = non-streaming). nil/unset = streaming (default).
@@ -57,8 +45,8 @@ func (m *MainAgent) maxTokens() int {
 	return m.maxTokensFn()
 }
 
-func NewMainAgent(prov llm.Provider, model, workDir string, tx *transcript.Store, window, maxTurns int) *MainAgent {
-	return &MainAgent{prov: prov, model: model, workDir: workDir, tx: tx, window: window, maxTurns: maxTurns}
+func NewMainAgent(prov llm.Provider, model, workDir string, window, maxTurns int) *MainAgent {
+	return &MainAgent{prov: prov, model: model, workDir: workDir, window: window, maxTurns: maxTurns}
 }
 
 func (m *MainAgent) SetCompactionWindowResolver(fn func() int) { m.windowFn = fn }
@@ -69,10 +57,6 @@ func (m *MainAgent) compactionWindow() int {
 	}
 	return m.window
 }
-
-// SetProxy points the main agent's WebFetch at the recording proxy plus the CA
-// cert it trusts to verify HTTPS through it (empty addr = direct).
-func (m *MainAgent) SetProxy(addr, caCert string) { m.proxyAddr, m.proxyCACert = addr, caCert }
 
 // SetWebSearch selects the web_search backend for the main agent (off by default).
 func (m *MainAgent) SetWebSearch(o WebSearchOpts) { m.webSearch = o }
@@ -111,7 +95,6 @@ func mainAgentSystem(goal, dataDir, workDir string) string {
 // worker/planner sessions — not just the final answer.
 func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.AssetStore, ts *db.ExplorationStore, goal, message string, emit func(db.Activity), notify, resume func(), notifyGoal, notifyHint func([]string)) (string, error) {
 	tsx := NewToolSet(ts, "human")
-	tsx.SetFindingRecorder(m.findingRecorder)
 	if as != nil {
 		tsx.SetAssetStore(as, as.Companies())
 	}
@@ -140,9 +123,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		DeferredTools:   def.Deferred,
 		UnlockSet:       def.Unlock,
 		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true, // 走记录代理留痕；载入代理 CA 验证 MITM 重签的 HTTPS 证书
-		WebFetchProxy:   m.proxyAddr,
-		WebFetchCACert:  m.proxyCACert,
+		EnableWebFetch:  true,
 		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
 		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
 		EnableWebSearch:       m.webSearch.Enabled,
@@ -153,8 +134,7 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		DeepSeekSearchAPIKey:  m.webSearch.DeepSeekAPIKey,
 		DeepSeekSearchModel:   m.webSearch.DeepSeekModel,
 		WebSearchProxy:        m.webSearch.Proxy,
-		BashEnv:               proxyEnv(m.proxyAddr, m.proxyCACert), // Bash 子命令默认走代理+信任 CA
-		WorkingDir:            mainDir,                              // 本任务工作目录 <workDir>/tasks/<taskID>
+		WorkingDir:            mainDir, // 本任务工作目录 <workDir>/tasks/<taskID>
 		ToolOutputDir:         cmdOutDir(mainDir),
 		MaxTurns:              m.maxTurns,                             // 0 = unlimited (configurable in agent management)
 		Compaction:            compactionConfig(m.compactionWindow()), // long chats stay within the window
@@ -164,34 +144,9 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		NonStreaming: m.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
 		MaxTokens:    m.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
-	if m.tx != nil { // persist raw human↔AI conversation; one accumulating file per segment
-		opts.Transcript = m.tx
-		// Segment 0 keeps the legacy "exp%d-main" name so existing transcripts still
-		// load; each new session (seg>=1) gets its own file for a clean context.
-		opts.SessionID = fmt.Sprintf("exp%d-main", ts.ID())
-		if mainSeg > 0 {
-			opts.SessionID = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
-		}
-	}
-	// 实验功能:开启后由 noa 接管上下文压缩(归档集中在 <workDir>/noa/<SessionID> 下,持久)。
-	// session id 与 transcript 同规则(分段感知),使归档与恢复对齐。
-	noaSession := fmt.Sprintf("exp%d-main", ts.ID())
-	if mainSeg > 0 {
-		noaSession = fmt.Sprintf("exp%d-main-s%d", ts.ID(), mainSeg)
-	}
-	enableNoa(&opts, m.noaEnabledFn, m.workDir, noaSession, noaWarn(noaSession))
 	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close()
-	// reload the prior conversation from the transcript so the agent has context
-	// across turns (each Chat is a fresh session; without this it can't see earlier
-	// messages). First turn: no file yet → Resume loads nothing and proceeds.
-	if m.tx != nil {
-		_ = s.Resume(opts.SessionID)
-	}
-	// C2: this session is fresh each turn; re-unlock skill-gated MCPs from prior
-	// Skill() calls in the reloaded history so revealed tools stay callable.
-	seedUnlockFromHistory(s.Messages(), def.UnlockSkill)
 	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
 		if emit != nil {
 			r.Worker = "mainagent"

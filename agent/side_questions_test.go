@@ -13,7 +13,6 @@ import (
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/sidequestion"
 	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 type sideAgentProvider struct {
@@ -65,8 +64,7 @@ func TestSideActualChatCheckpointToolResultAndTranscriptIsolation(t *testing.T) 
 			}
 			p := &sideAgentProvider{path: file}
 			bound := sidequestion.Bind(p, sidequestion.Model{Model: "fixture", Streaming: streaming})
-			store := transcript.NewStore(filepath.Join(dir, "transcripts"))
-			chat := NewChatAgent(bound, "fixture", dir, store, 100000)
+			chat := NewChatAgent(bound, "fixture", dir, 100000)
 			chat.SetNonStreaming(func() bool { return !streaming })
 			var snapshots []sidequestion.Snapshot
 			var activities []db.Activity
@@ -81,10 +79,6 @@ func TestSideActualChatCheckpointToolResultAndTranscriptIsolation(t *testing.T) 
 			raw, _ := json.Marshal(last)
 			if last.Parent.ConversationID != 987654 || !strings.Contains(string(raw), "controlled-homepage-result") || !strings.Contains(string(raw), "main finished") {
 				t.Fatalf("missing real tool result/final reply: %s", raw)
-			}
-			before, err := os.ReadFile(store.MainPath("conv-987654"))
-			if err != nil {
-				t.Fatal(err)
 			}
 			count := len(activities)
 			tools := 0
@@ -107,12 +101,8 @@ func TestSideActualChatCheckpointToolResultAndTranscriptIsolation(t *testing.T) 
 			if err != nil || !answer.ToolUse || p.calls != 1 || !strings.Contains(answer.Text, "不能执行工具") {
 				t.Fatalf("tool denial %+v %v", answer, err)
 			}
-			after, err := os.ReadFile(store.MainPath("conv-987654"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(before) != string(after) || len(activities) != count {
-				t.Fatal("side question modified main transcript/activity")
+			if len(activities) != count {
+				t.Fatal("side question modified main activity")
 			}
 			if len(snapshots) == 0 || snapshots[len(snapshots)-1].Version != last.Version {
 				t.Fatal("side request replaced main checkpoint")

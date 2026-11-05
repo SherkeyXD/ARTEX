@@ -1269,7 +1269,7 @@ FROM assets WHERE $1 = ANY(task_ids)`, taskID)
 // are not referenced by any other live task. Current-task candidates include
 // both task_ids ownership and exploration anchors so legacy seeded assets (which
 // were anchor-only) are covered. Protection is host-wide: if another live task
-// references any asset for a candidate host, that host's global traffic remains.
+// references any asset for a candidate host, that host remains.
 func (s *AssetStore) HostsForTaskDeletion(taskID, explorationID int64) ([]string, error) {
 	return hostsForTaskDeletion(s.db, taskID, explorationID)
 }
@@ -1279,9 +1279,7 @@ type rowsQuerier interface {
 }
 
 // hostsForTaskDeletion is shared by the read-only AssetStore API and the task
-// deletion transaction. Coordinated traffic deletion must call it through the
-// transaction path so asset/anchor writes stay locked until the task delete is
-// committed.
+// deletion path. Asset/anchor writes stay locked until the task delete is committed.
 func hostsForTaskDeletion(q rowsQuerier, taskID, explorationID int64) ([]string, error) {
 	rows, err := q.Query(`
 WITH current_assets AS (

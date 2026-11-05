@@ -195,7 +195,7 @@ ORDER BY target.id LIMIT $`+limitPosition+` OFFSET $`+offsetPosition, pageArgs..
 
 // HostsByTaskWithSources resolves exact HTTP host candidates from assets that
 // are attached to, anchored by, or in scope for the current task or a direct
-// source. Traffic remains global and is not copied. This read helper must not be
+// source. This read helper must not be
 // used for destructive task cleanup; HostsByTask intentionally retains that
 // narrower, task-owned behavior.
 func (s *AssetStore) HostsByTaskWithSources(taskID int64) ([]string, error) {
