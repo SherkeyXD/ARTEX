@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { BackButton } from "@/components/back-button";
 import { StatusBadge } from "@/components/status-badge";
 import { TaskLLMProfileChain } from "@/components/task-llm-profile-chain";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
@@ -241,59 +242,45 @@ function TaskDetailInner() {
       .catch(() => setProfiles([]));
   }, []);
 
-  React.useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .interceptTask(id)
-        .then((rows) => {
-          if (alive) setInterceptPendingCount(rows.filter((r) => r.status === "pending").length);
-        })
-        .catch(() => {
-          // Polling is best-effort; the next interval retries automatically.
-        });
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [id]);
+  useVisibilityPoll(async () => {
+    try {
+      const rows = await api.interceptTask(id);
+      const pendingCount = rows.filter((r) => r.status === "pending").length;
+      setInterceptPendingCount((prev) => (prev === pendingCount ? prev : pendingCount));
+    } catch {
+      // Polling is best-effort; the next interval retries automatically.
+    }
+  }, 5000);
 
   const taskLoadInFlight = React.useRef<string | null>(null);
-  const load = React.useCallback(() => {
+  const load = React.useCallback(async () => {
     if (taskLoadInFlight.current === id) return;
     taskLoadInFlight.current = id;
-    Promise.all([api.task(id), api.stats(id).catch(() => null)])
-      .then(([task, s]) => {
-        if (taskLoadInFlight.current !== id) return;
-        const base = { ...task };
-        const at = s?.active_task;
-        if (at) {
-          base.in_flight = at.in_flight;
-          base.goals_total = at.goals_total;
-          base.goals_met = at.goals_met;
-          base.engine_mode = s?.engine_mode ?? at.engine_mode;
-          base.paused = at.paused;
-        }
-        setTask(base);
-        setPaused(at?.paused ?? base.paused ?? false);
-      })
-      .catch(() => {
-        // Keep the last rendered task state during a transient poll failure.
-      })
-      .finally(() => {
-        if (taskLoadInFlight.current === id) {
-          taskLoadInFlight.current = null;
-          setLoaded(true);
-        }
-      });
+    try {
+      const [task, s] = await Promise.all([api.task(id), api.stats(id).catch(() => null)]);
+      if (taskLoadInFlight.current !== id) return;
+      const base = { ...task };
+      const at = s?.active_task;
+      if (at) {
+        base.in_flight = at.in_flight;
+        base.goals_total = at.goals_total;
+        base.goals_met = at.goals_met;
+        base.engine_mode = s?.engine_mode ?? at.engine_mode;
+        base.paused = at.paused;
+      }
+      setTask(base);
+      setPaused(at?.paused ?? base.paused ?? false);
+    } catch {
+      // Keep the last rendered task state during a transient poll failure.
+    } finally {
+      if (taskLoadInFlight.current === id) {
+        taskLoadInFlight.current = null;
+        setLoaded(true);
+      }
+    }
   }, [id]);
-  React.useEffect(() => {
-    load();
-    const timer = setInterval(load, 5000);
-    return () => clearInterval(timer);
-  }, [load]);
+
+  useVisibilityPoll(load, 5000);
 
   async function togglePause() {
     if (task && ["done", "failed", "timeout"].includes(task.status)) return;

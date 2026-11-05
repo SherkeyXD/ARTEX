@@ -33,6 +33,7 @@ import { type Tone, toneClasses, toneDot } from "@/lib/status";
 import { taskAssetTypeLabel } from "@/lib/task-assets";
 import type { Edge, ExploreKind, FindingAsset, NewAssetType, TaskNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 
 const PAGE_SIZES = [20, 50, 100];
 const POLL_MS = 8000;
@@ -453,15 +454,18 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
   const seenRef = React.useRef<Set<string>>(new Set());
   const baselineRef = React.useRef<number | null>(null);
   const streamRef = React.useRef("");
+  const lastSigRef = React.useRef("");
   // 只有「最新在前的第 1 页」才是真正的直播位；其余位置轮询只更新未读计数，
   // 不动列表，免得翻页/展开时内容在脚下变。
   const atLive = page === 1 && order === "desc";
 
-  React.useEffect(() => {
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 30000);
-    return () => clearInterval(t);
-  }, []);
+  useVisibilityPoll(
+    React.useCallback(() => {
+      setNow(Date.now());
+    }, []),
+    30000,
+    { immediate: true, refetchOnFocus: true }
+  );
 
   // 输入防抖:打字停 300ms 才真正查询,并回到第一页。
   React.useEffect(() => {
@@ -482,6 +486,7 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
       streamRef.current = stream;
       seenRef.current = new Set();
       baselineRef.current = null;
+      lastSigRef.current = "";
       setPending(0);
     }
     const load = () =>
@@ -490,12 +495,16 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
         .then((r) => {
           if (!alive) return;
           // 直播位每轮都刷新;其它位置只渲染第一次,之后轮询仅更新未读计数。
+          const sig = `${r.total}|${r.items.map((n) => `${n.id}:${n.status || ""}:${n.updated_at || ""}`).join(";")}`;
           if (atLive || !rendered) {
             rendered = true;
-            setItems(r.items);
-            setEdges(r.edges);
-            setRefs(r.refs);
-            setAssets(r.assets);
+            if (sig !== lastSigRef.current) {
+              lastSigRef.current = sig;
+              setItems(r.items);
+              setEdges(r.edges);
+              setRefs(r.refs);
+              setAssets(r.assets);
+            }
           }
           setTotal(r.total);
           if (atLive) {
@@ -519,10 +528,32 @@ export function BroadcastTab({ taskId }: { taskId: string }) {
         alive = false;
       };
     }
-    const timer = setInterval(load, POLL_MS);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startTimer = () => {
+      if (!timer && typeof document !== "undefined" && !document.hidden) {
+        timer = setInterval(load, POLL_MS);
+      }
+    };
+    const stopTimer = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        void load();
+        startTimer();
+      }
+    };
+    startTimer();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       alive = false;
-      clearInterval(timer);
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [taskId, page, size, kinds, query, order, live, atLive]);
 

@@ -355,6 +355,7 @@ export function AssetsTab({ taskId }: { taskId: string }) {
   const [removeTarget, setRemoveTarget] = React.useState<Asset | null>(null);
   const [removing, setRemoving] = React.useState(false);
   const assetsRequestRef = React.useRef(0);
+  const assetsSigRef = React.useRef("");
   const dslMode = query.trim() !== "";
 
   React.useEffect(() => {
@@ -380,7 +381,8 @@ export function AssetsTab({ taskId }: { taskId: string }) {
     let active = true;
     const dsl = query.trim();
     const request = ++assetsRequestRef.current;
-    const load = async () => {
+    const load = async (isPoll = false) => {
+      if (isPoll && typeof document !== "undefined" && document.hidden) return;
       setLoading(true);
       try {
         // The search always stays within this task's assets: taskAssets and
@@ -392,7 +394,11 @@ export function AssetsTab({ taskId }: { taskId: string }) {
           api.assetCounts(taskId),
         ]);
         if (!active || assetsRequestRef.current !== request) return;
-        setRows(current.assets);
+        const sig = `${current.total}|${current.assets.map((a) => `${a.id}:${a.tested}`).join(";")}`;
+        if (sig !== assetsSigRef.current) {
+          assetsSigRef.current = sig;
+          setRows(current.assets);
+        }
         setTotal(current.total);
         setCounts(nextCounts ?? {});
         setDslError("");
@@ -415,11 +421,33 @@ export function AssetsTab({ taskId }: { taskId: string }) {
     };
     // Debounce DSL keystrokes; plain (re)loads and polling run immediately.
     const debounce = setTimeout(() => void load(), dsl ? 400 : 0);
-    const timer = setInterval(() => void load(), 10_000);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startTimer = () => {
+      if (!timer && typeof document !== "undefined" && !document.hidden) {
+        timer = setInterval(() => void load(true), 10_000);
+      }
+    };
+    const stopTimer = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        void load();
+        startTimer();
+      }
+    };
+    startTimer();
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
       clearTimeout(debounce);
-      clearInterval(timer);
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [page, query, refreshKey, size, tab, taskId]);
 

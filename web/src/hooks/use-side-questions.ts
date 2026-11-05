@@ -16,9 +16,15 @@ function newSideRequestID(): string {
 
 function merge(old: SideExchange[], incoming: SideExchange[]) {
   const byID = new Map(old.map((item) => [item.id, item]));
+  let changed = false;
   for (const item of incoming) {
-    if ((byID.get(item.id)?.sequence ?? -1) <= item.sequence) byID.set(item.id, item);
+    const prev = byID.get(item.id);
+    if (!prev || prev.sequence < item.sequence || prev.status !== item.status) {
+      byID.set(item.id, item);
+      changed = true;
+    }
   }
+  if (!changed && old.length === byID.size) return old;
   return [...byID.values()].sort((a, b) => a.ordinal - b.ordinal);
 }
 
@@ -120,8 +126,32 @@ export function useSideQuestions(parent: string | null) {
   useEffect(() => {
     if (!open || !parent) return;
     void load();
-    const timer = setInterval(() => void load(), 2000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const startTimer = () => {
+      if (!timer && typeof document !== "undefined" && !document.hidden) {
+        timer = setInterval(() => void load(), 2000);
+      }
+    };
+    const stopTimer = () => {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    };
+    const onVisibility = () => {
+      if (document.hidden) {
+        stopTimer();
+      } else {
+        void load();
+        startTimer();
+      }
+    };
+    startTimer();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopTimer();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [open, parent, load]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: Reconnect after a clear attempt invalidates older callbacks.

@@ -119,6 +119,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { getLocalStorageValue, setLocalStorageValue } from "@/lib/local-storage.client";
 import { type SortDirection, useStoredSortPreference } from "@/lib/sort-preference";
 import type {
@@ -479,11 +480,10 @@ export default function TasksPage() {
   }, []);
 
   React.useEffect(() => {
-    load();
     loadCategories();
-    const i = setInterval(load, POLL_MS);
-    return () => clearInterval(i);
-  }, [load, loadCategories]);
+  }, [loadCategories]);
+
+  useVisibilityPoll(load, POLL_MS);
 
   const refreshCategoriesAndTasks = React.useCallback(() => {
     lastRef.current = "";
@@ -515,13 +515,14 @@ export default function TasksPage() {
   // 重渲染整张表。
   const hasRunning = React.useMemo(() => tasks.some((t) => t.status === "running"), [tasks]);
 
-  // tick every second so running tasks' 运行时长 counts up live.
-  React.useEffect(() => {
-    if (!hasRunning) return;
-    setNowSec(Math.floor(Date.now() / 1000));
-    const i = setInterval(() => setNowSec(Math.floor(Date.now() / 1000)), 1000);
-    return () => clearInterval(i);
-  }, [hasRunning]);
+  // tick every second so running tasks' 运行时长 counts up live. Pauses when tab is hidden.
+  useVisibilityPoll(
+    React.useCallback(() => {
+      setNowSec(Math.floor(Date.now() / 1000));
+    }, []),
+    1000,
+    { enabled: hasRunning, immediate: true, refetchOnFocus: true }
+  );
 
   const deleteTask = React.useCallback(
     async (id: string, options: DeleteTaskOptions) => {
@@ -1650,6 +1651,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
   const [selected, setSelected] = React.useState<Set<number>>(() => new Set());
   const [loading, setLoading] = React.useState(true);
   const pendingRestoreIDs = React.useRef(new Set<number>());
+  const archiveSigRef = React.useRef("");
 
   const load = React.useCallback(async () => {
     try {
@@ -1659,7 +1661,11 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
         q: query.trim(),
         state: stateFilter === "all" ? undefined : stateFilter,
       });
-      setArchives(result.items);
+      const sig = `${result.total}|${result.items.map((a) => `${a.id}:${a.state}:${a.updated_at || ""}`).join(";")}`;
+      if (sig !== archiveSigRef.current) {
+        archiveSigRef.current = sig;
+        setArchives(result.items);
+      }
       setTotal(result.total);
       setSelected((current) => {
         const visible = new Set(result.items.map((archive) => archive.id));
@@ -1684,11 +1690,7 @@ function TaskArchivesPanel({ onChanged }: { onChanged: () => void }) {
     }
   }, [onChanged, page, pageSize, query, stateFilter]);
 
-  React.useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), 2_000);
-    return () => clearInterval(timer);
-  }, [load]);
+  useVisibilityPoll(load, 2_000);
 
   const selectable = React.useMemo(
     () => archives.filter((archive) => !ARCHIVE_PROCESSING_STATES.has(archive.state)),

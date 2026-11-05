@@ -53,6 +53,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { useSideQuestions } from "@/hooks/use-side-questions";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { mergeActivities } from "@/lib/activity-merge";
 import { api } from "@/lib/api";
 import { shouldSubmitOnKey, useChatSendMode } from "@/lib/chat-send-mode";
@@ -1081,11 +1082,19 @@ export default function ChatPage() {
   >({});
 
   const conversationListSeq = React.useRef(0);
+  const convsSigRef = React.useRef("");
   const reloadConvs = React.useCallback(async () => {
     const seq = ++conversationListSeq.current;
     try {
       const items = await api.conversations();
-      if (seq === conversationListSeq.current) { setConvs(items); setConvsLoaded(true); }
+      if (seq === conversationListSeq.current) {
+        const sig = `${items.length}|${items.map((c) => `${c.id}:${c.running}:${c.updated_at || ""}:${c.title}`).join(";")}`;
+        if (sig !== convsSigRef.current) {
+          convsSigRef.current = sig;
+          setConvs(items);
+        }
+        setConvsLoaded(true);
+      }
     } catch {
       // Preserve the selected transcript and list on a transient poll failure.
     }
@@ -1106,21 +1115,8 @@ export default function ChatPage() {
   }, []);
 
   // One list poll supplies runtime state for all sidebar rows, including the
-  // unselected ones. Await completion so slow requests do not overlap.
-  React.useEffect(() => {
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function poll() {
-      await reloadConvs();
-      if (!disposed) timer = setTimeout(() => void poll(), 2000);
-    }
-    void poll();
-    return () => {
-      disposed = true;
-      conversationListSeq.current++;
-      clearTimeout(timer);
-    };
-  }, [reloadConvs]);
+  // unselected ones. Automatically pauses when the browser tab is hidden.
+  useVisibilityPoll(reloadConvs, 2000);
 
   React.useEffect(() => {
     setSelectedConversationIds((current) => {

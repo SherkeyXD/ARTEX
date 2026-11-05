@@ -30,12 +30,13 @@ export function RetestsTab({ taskId }: { taskId: string }) {
   const [error, setError] = React.useState("");
   const [refreshVersion, setRefreshVersion] = React.useState(0);
   const refresh = React.useCallback(() => setRefreshVersion((version) => version + 1), []);
+  const dataSigRef = React.useRef("");
 
   // Only this task's own findings, including those without graph nodes.
   // Fetch history only for the selection, and wait for each poll to finish.
   React.useEffect(() => {
     let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     async function load() {
       try {
         const result = await api.findingsPage({ task: taskId, page, pageSize: PAGE_SIZE, sort: "time" });
@@ -45,7 +46,11 @@ export function RetestsTab({ taskId }: { taskId: string }) {
           setPage(lastPage);
           return;
         }
-        setData(result);
+        const sig = `${result.total}|${result.items.map((f) => `${f.id}:${f.status}`).join(";")}`;
+        if (sig !== dataSigRef.current) {
+          dataSigRef.current = sig;
+          setData(result);
+        }
         setSelectedId((current) =>
           result.items.some((finding) => finding.id === current) ? current : (result.items[0]?.id ?? ""),
         );
@@ -53,14 +58,29 @@ export function RetestsTab({ taskId }: { taskId: string }) {
       } catch (e) {
         if (!disposed) setError((e as Error).message);
       } finally {
-        if (!disposed) timer = setTimeout(() => void load(), 3000);
+        if (!disposed) {
+          if (typeof document !== "undefined" && document.hidden) {
+            // Pause timer while hidden; visibilitychange will resume.
+            return;
+          }
+          timer = setTimeout(() => void load(), 3000);
+        }
       }
     }
     void refreshVersion; // Refresh triage immediately after a retest completes.
     void load();
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden && !disposed) {
+        if (timer) clearTimeout(timer);
+        void load();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       disposed = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [taskId, page, refreshVersion]);
 

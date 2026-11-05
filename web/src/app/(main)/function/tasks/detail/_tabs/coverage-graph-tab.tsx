@@ -535,6 +535,7 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
   React.useEffect(() => {
     let destroyed = false;
     let graph: G6Graph | null = null;
+    let onVisibility: (() => void) | null = null;
     void (async () => {
       const { Graph } = await import("@antv/g6");
       if (destroyed || !containerRef.current) return;
@@ -595,9 +596,24 @@ function GraphInner({ taskId, coverageEnabled = true }: { taskId: string; covera
       });
       graphRef.current = graph;
       applyData();
+
+      onVisibility = () => {
+        if (typeof document === "undefined") return;
+        if (document.hidden) {
+          try {
+            graph?.stopLayout();
+          } catch {
+            /* ignore */
+          }
+        }
+      };
+      document.addEventListener("visibilitychange", onVisibility);
     })();
     return () => {
       destroyed = true;
+      if (onVisibility) {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       // 先停布局再销毁:尽量缩短"布局在飞、context 被清空"的竞态窗口。
       try {
         graph?.stopLayout();

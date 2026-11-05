@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { Progress } from "@/components/ui/progress";
+import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { api } from "@/lib/api";
 import type {
   Activity,
@@ -147,108 +148,95 @@ export default function DashboardPage() {
   const [llmProfiles, setLLMProfiles] = React.useState<LLMProfile[]>([]);
 
   // The task list is the most expensive dashboard source. Poll it independently
-  // so a large history cannot hold back every other dashboard panel.
-  React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    let signature = "";
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const tr = await api.tasks();
-        if (!alive) return;
-        const nextSignature = JSON.stringify(tr.tasks);
-        if (nextSignature !== signature) {
-          signature = nextSignature;
-          setTasks(tr.tasks);
-        }
-      } catch {
-        /* transient errors — next poll retries */
-      } finally {
-        loading = false;
+  // when the page is visible so a large history cannot hold back every other dashboard panel.
+  const taskSigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const tr = await api.tasks();
+      const nextSignature = JSON.stringify(tr.tasks);
+      if (nextSignature !== taskSigRef.current) {
+        taskSigRef.current = nextSignature;
+        setTasks(tr.tasks);
       }
-    };
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+    } catch {
+      /* transient errors — next poll retries */
+    }
+  }, 5000);
 
-  // The remaining fast sources stay batched so one poll causes a single render.
-  React.useEffect(() => {
-    let alive = true;
-    let loading = false;
-    const load = async () => {
-      if (loading) return;
-      loading = true;
-      try {
-        const [findings, stats, settings, pending, activity, tokens, conversationTokens] = await Promise.all([
-          api.findings(),
-          api.stats(),
-          api.settings(),
-          api.interceptPending(),
-          api.activity(undefined, { limit: 30 }),
-          api.tokenStats(),
-          api.conversationTokens(),
-        ]);
-        if (!alive) return;
-        setFindings(findings);
-        setStats(stats);
-        setSettings(settings);
-        setPending(pending);
-        setActivity(activity.items);
-        setTokens(tokens.total ?? null);
-        setConvTokens(conversationTokens);
-      } catch {
-        // Preserve stale data and retry on the next interval.
-      } finally {
-        loading = false;
-      }
-    };
-    void load();
-    const timer = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, []);
+  // The remaining fast sources stay batched with dirty checking so unchanged polls do not re-render.
+  const fastSigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const [findings, stats, settings, pending, activity, tokens, conversationTokens] = await Promise.all([
+        api.findings(),
+        api.stats(),
+        api.settings(),
+        api.interceptPending(),
+        api.activity(undefined, { limit: 30 }),
+        api.tokenStats(),
+        api.conversationTokens(),
+      ]);
+      const nextSig = JSON.stringify([
+        findings.length,
+        findings[0]?.id,
+        findings[0]?.ts,
+        stats,
+        settings,
+        pending.length,
+        activity.items[0]?.seq,
+        activity.items.length,
+        tokens.total,
+        conversationTokens,
+      ]);
+      if (nextSig === fastSigRef.current) return;
+      fastSigRef.current = nextSig;
+      setFindings(findings);
+      setStats(stats);
+      setSettings(settings);
+      setPending(pending);
+      setActivity(activity.items);
+      setTokens(tokens.total ?? null);
+      setConvTokens(conversationTokens);
+    } catch {
+      // Preserve stale data and retry on the next interval.
+    }
+  }, 5000);
 
-  // slow poll: assets, system-static (every 15s)
-  React.useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const [counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
-          api.assetCounts(),
-          api.agents(),
-          api.mcpServers(),
-          api.skills(),
-          api.tools(),
-          api.llmProfiles(),
-          api.usageStats(365),
-        ]);
-        if (!alive) return;
-        setAssetCounts(counts ?? {});
-        setAgents(agentList);
-        setMcpServers(mcpList);
-        setSkills(skillList);
-        setTools(toolList);
-        setLLMProfiles(profileList);
-        setUsageStats(usage);
-      } catch {
-        /* transient errors */
-      }
-    };
-    void load();
-    const t = setInterval(load, 15000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
+  // slow poll: assets, system-static (every 15s) with dirty checking
+  const slowSigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const [counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
+        api.assetCounts(),
+        api.agents(),
+        api.mcpServers(),
+        api.skills(),
+        api.tools(),
+        api.llmProfiles(),
+        api.usageStats(365),
+      ]);
+      const nextSig = JSON.stringify([
+        counts,
+        agentList.length,
+        mcpList.length,
+        skillList.length,
+        toolList.length,
+        profileList.length,
+        usage.length,
+      ]);
+      if (nextSig === slowSigRef.current) return;
+      slowSigRef.current = nextSig;
+      setAssetCounts(counts ?? {});
+      setAgents(agentList);
+      setMcpServers(mcpList);
+      setSkills(skillList);
+      setTools(toolList);
+      setLLMProfiles(profileList);
+      setUsageStats(usage);
+    } catch {
+      /* transient errors */
+    }
+  }, 15000);
 
   // ── derived ───────────────────────────────────────────────────────────────
 
