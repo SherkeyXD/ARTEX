@@ -39,8 +39,7 @@
       "!.next",
       "!dist",
       "!out",
-      "!src/components/ui",
-      "!src/components/calendar"
+      "!src/components/ui"
     ]
   },
   "formatter": {
