@@ -248,24 +248,24 @@ export default function SystemSettingsPage() {
       <SettingsHubNav />
 
       <Tabs defaultValue="network" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-5 h-auto p-1 bg-muted/60">
-          <TabsTrigger value="network" className="flex items-center gap-2 py-2 text-xs">
+        <TabsList className="inline-flex h-9 w-fit max-w-full items-center justify-start gap-1 rounded-lg bg-muted/70 p-1 overflow-x-auto no-scrollbar">
+          <TabsTrigger value="network" className="h-full px-3 text-xs font-medium">
             <RadioTowerIcon className="size-3.5" />
             <span>网络与代理</span>
           </TabsTrigger>
-          <TabsTrigger value="runtime" className="flex items-center gap-2 py-2 text-xs">
+          <TabsTrigger value="runtime" className="h-full px-3 text-xs font-medium">
             <CpuIcon className="size-3.5" />
             <span>运行时与并发</span>
           </TabsTrigger>
-          <TabsTrigger value="constraints" className="flex items-center gap-2 py-2 text-xs">
+          <TabsTrigger value="constraints" className="h-full px-3 text-xs font-medium">
             <ShieldAlertIcon className="size-3.5" />
             <span>安全约束注入</span>
           </TabsTrigger>
-          <TabsTrigger value="preferences" className="flex items-center gap-2 py-2 text-xs">
+          <TabsTrigger value="preferences" className="h-full px-3 text-xs font-medium">
             <KeyboardIcon className="size-3.5" />
             <span>界面偏好</span>
           </TabsTrigger>
-          <TabsTrigger value="maintenance" className="flex items-center gap-2 py-2 text-xs">
+          <TabsTrigger value="maintenance" className="h-full px-3 text-xs font-medium">
             <RefreshCwIcon className="size-3.5" />
             <span>系统维护</span>
           </TabsTrigger>
