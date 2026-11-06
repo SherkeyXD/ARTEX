@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/runtime"
-	"github.com/Autumn-27/artex/runtime/adapter"
-	_ "github.com/Autumn-27/artex/runtime/harness/pi"
-	"github.com/Autumn-27/artex/runtime/middleware"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime/adapter"
+	_ "github.com/SherkeyXD/ARTEX/runtime/harness/pi"
+	"github.com/SherkeyXD/ARTEX/runtime/middleware"
 	"github.com/Autumn-27/norma/harness"
 	actool "github.com/Autumn-27/norma/tool"
 )

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/artex/notify"
+	"github.com/SherkeyXD/ARTEX/notify"
 )
 
 // DBFinding is a row in the standalone findings table. It persists across task

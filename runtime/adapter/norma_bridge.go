@@ -7,7 +7,7 @@ import (
 	"iter"
 	"strings"
 
-	"github.com/Autumn-27/artex/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )

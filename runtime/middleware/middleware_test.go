@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Autumn-27/artex/runtime"
-	"github.com/Autumn-27/artex/runtime/harness/pi"
-	"github.com/Autumn-27/artex/runtime/middleware"
+	"github.com/SherkeyXD/ARTEX/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime/harness/pi"
+	"github.com/SherkeyXD/ARTEX/runtime/middleware"
 )
 
 type mockLLMWithTool struct {

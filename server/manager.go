@@ -15,10 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Autumn-27/artex/agent"
-	pgdb "github.com/Autumn-27/artex/db"
-	"github.com/Autumn-27/artex/guard"
-	"github.com/Autumn-27/artex/intercept"
+	"github.com/SherkeyXD/ARTEX/agent"
+	pgdb "github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/guard"
+	"github.com/SherkeyXD/ARTEX/intercept"
 )
 
 // Task is one engagement: a description + goal + its own exploration store,
