@@ -78,7 +78,7 @@ cd ARTEX
 git clone https://github.com/SherkeyXD/ARTEX.git
 cd ARTEX
 cp .env.example .env          # 填 POSTGRES_PASSWORD、可选 ANTHROPIC_API_KEY
-docker compose up -d          # 拉取 sherkeyxd/artex 镜像 + postgres
+docker compose up -d          # 拉取 sherkey/artex 镜像 + postgres
 # → http://localhost:8787
 ```
 
