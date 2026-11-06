@@ -105,7 +105,9 @@ export function NavMain({ items }: NavMainProps) {
   };
 
   const isSubItemActive = (url: string) => {
-    return path === url;
+    if (path === url) return true;
+    if (url === "/system/agents" && path.startsWith("/system/agents/")) return true;
+    return false;
   };
 
   const isSubmenuOpen = (item: NavMainParentItem) => {
@@ -163,8 +165,8 @@ function NavItem({ item, isItemActive, isSubItemActive, isSubmenuOpen }: NavItem
 }
 
 // InterceptPendingBadge polls /api/intercept/pending every 5 s when tab is visible,
-// and shows a red count badge when there are unresolved approval requests.
-function InterceptPendingBadge() {
+// and shows an amber count badge when there are unresolved approval requests.
+function useInterceptPendingCount() {
   const [count, setCount] = React.useState(0);
 
   useVisibilityPoll(async () => {
@@ -176,9 +178,20 @@ function InterceptPendingBadge() {
     }
   }, 5000);
 
+  return count;
+}
+
+function InterceptPendingBadge({ className }: { className?: string }) {
+  const count = useInterceptPendingCount();
+
   if (count === 0) return null;
   return (
-    <SidebarMenuBadge className="flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ring-1 ring-amber-400/40">
+    <SidebarMenuBadge
+      className={cn(
+        "flex h-4.5 min-w-[18px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold leading-none text-white shadow-sm ring-1 ring-amber-400/40",
+        className,
+      )}
+    >
       {count > 99 ? "99+" : count}
     </SidebarMenuBadge>
   );
@@ -219,9 +232,11 @@ function NavLinkIcon({ item, showFallback }: NavLinkIconProps) {
 
 function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemProps) {
   const Icon = item.icon;
+  const isSecurityHub = item.id === "security-hub";
+  const pendingCount = useInterceptPendingCount();
 
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem className="relative">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton tooltip={item.title} isActive={isActive} disabled={item.disabled}>
@@ -229,11 +244,15 @@ function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemPro
             <span>{item.title}</span>
           </SidebarMenuButton>
         </DropdownMenuTrigger>
+        {isSecurityHub && pendingCount > 0 && (
+          <span className="pointer-events-none absolute top-1.5 right-1.5 hidden size-2 rounded-full bg-amber-500 ring-2 ring-background group-data-[collapsible=icon]:block" />
+        )}
 
         <DropdownMenuContent side="right" align="start" sideOffset={12} className="w-48">
           <DropdownMenuGroup>
             {item.subItems.map((subItem) => {
               const SubIcon = subItem.icon;
+              const isApprovals = subItem.id === "approvals";
 
               return (
                 <DropdownMenuItem key={subItem.id} asChild disabled={subItem.disabled}>
@@ -246,7 +265,12 @@ function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemPro
                     className="flex items-center gap-2"
                   >
                     {SubIcon && <SubIcon />}
-                    <span>{subItem.title}</span>
+                    <span className="flex-1">{subItem.title}</span>
+                    {isApprovals && pendingCount > 0 && (
+                      <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                        {pendingCount > 99 ? "99+" : pendingCount}
+                      </span>
+                    )}
                   </Link>
                 </DropdownMenuItem>
               );
@@ -260,6 +284,7 @@ function NavDropdownItem({ item, isActive, isSubItemActive }: NavDropdownItemPro
 
 function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: NavCollapsibleItemProps) {
   const Icon = item.icon;
+  const isSecurityHub = item.id === "security-hub";
 
   return (
     <Collapsible asChild defaultOpen={defaultOpen} className="group/collapsible">
@@ -271,15 +296,20 @@ function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: Na
             <ChevronRight className="ml-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
           </SidebarMenuButton>
         </CollapsibleTrigger>
-        <NavItemBadge badge={item.badge} />
+        {isSecurityHub ? (
+          <InterceptPendingBadge className="right-7" />
+        ) : (
+          <NavItemBadge badge={item.badge} />
+        )}
 
         <CollapsibleContent>
           <SidebarMenuSub>
             {item.subItems.map((subItem) => {
               const SubIcon = subItem.icon;
+              const isApprovals = subItem.id === "approvals";
 
               return (
-                <SidebarMenuSubItem key={subItem.id}>
+                <SidebarMenuSubItem key={subItem.id} className="relative">
                   <SidebarMenuSubButton
                     asChild
                     aria-disabled={subItem.disabled}
@@ -295,6 +325,7 @@ function NavCollapsibleItem({ item, isActive, defaultOpen, isSubItemActive }: Na
                       <span>{subItem.title}</span>
                     </Link>
                   </SidebarMenuSubButton>
+                  {isApprovals && <InterceptPendingBadge className="right-2" />}
                 </SidebarMenuSubItem>
               );
             })}

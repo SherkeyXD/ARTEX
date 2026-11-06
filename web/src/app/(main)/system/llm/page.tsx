@@ -26,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AgentHubNav } from "@/components/agent-hub-nav";
 import { api } from "@/lib/api";
 import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import type { LLMPoolMember, LLMPoolStatus, LLMProfile, LLMRetryOverride } from "@/lib/types";
@@ -856,27 +857,23 @@ export default function LLMPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
-          <p className="text-muted-foreground text-sm">
-            全 Agent 共享的格式 / 模型 / 限速配置。点击卡片编辑，星标为当前激活配置。
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setPoolOpen(true)}>
-            <ZapIcon /> 轮询配置
-            {poolOn && (
-              <Badge variant="outline" className="ml-1 border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
-                已开启
-              </Badge>
-            )}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
-            <PlusIcon /> 新建
-          </Button>
-        </div>
-      </div>
+      <AgentHubNav
+        action={
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setPoolOpen(true)}>
+              <ZapIcon /> 轮询配置
+              {poolOn && (
+                <Badge variant="outline" className="ml-1 border-emerald-500/50 text-emerald-600 dark:text-emerald-400">
+                  已开启
+                </Badge>
+              )}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => openEditor(null)}>
+              <PlusIcon /> 新建
+            </Button>
+          </div>
+        }
+      />
 
       <Tabs defaultValue="profiles" className="flex-1">
         <TabsList>

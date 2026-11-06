@@ -648,7 +648,13 @@ function ApprovalTable({
   );
 }
 
-export function ApprovalRecords({ taskId }: { taskId?: string }) {
+export function ApprovalRecords({
+  taskId,
+  hideHeader = false,
+}: {
+  taskId?: string;
+  hideHeader?: boolean;
+}) {
   const [rows, setRows] = React.useState<InterceptApprovalRow[]>([]);
   const [pendingRows, setPendingRows] = React.useState<InterceptPending[]>([]);
   const [page, setPage] = React.useState(1);
@@ -797,18 +803,33 @@ export function ApprovalRecords({ taskId }: { taskId?: string }) {
   const title = taskId ? "拦截审批" : "审批记录";
   return (
     <div className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <ClipboardListIcon className="size-5 text-muted-foreground" />
-          <h1 className="font-semibold text-xl">{title}</h1>
-          {pending.length ? <Badge variant="secondary">{pending.length} 待审批</Badge> : null}
+      {hideHeader ? (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-medium">审批记录列表</span>
+            {pending.length ? <Badge variant="secondary">{pending.length} 待审批</Badge> : null}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => void load(true)} disabled={loading || refreshing}>
+            <RefreshCwIcon data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
+            刷新
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void load(true)} disabled={loading || refreshing}>
-          <RefreshCwIcon data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
-          刷新
-        </Button>
-      </div>
-      <p className="text-muted-foreground text-sm">展开记录查看工具请求和审批裁决，以及当时的上下文与执行结果。</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <ClipboardListIcon className="size-5 text-muted-foreground" />
+              <h1 className="font-semibold text-xl">{title}</h1>
+              {pending.length ? <Badge variant="secondary">{pending.length} 待审批</Badge> : null}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => void load(true)} disabled={loading || refreshing}>
+              <RefreshCwIcon data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
+              刷新
+            </Button>
+          </div>
+          <p className="text-muted-foreground text-sm">展开记录查看工具请求和审批裁决，以及当时的上下文与执行结果。</p>
+        </>
+      )}
       <FieldGroup className="flex-row flex-wrap items-end gap-3" aria-label="审批记录筛选">
         <Field className="w-full sm:w-40">
           <FieldLabel htmlFor={`${filterID}-status`}>审批状态</FieldLabel>

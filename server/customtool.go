@@ -456,7 +456,7 @@ func (s *Server) runHTTPTool(ctx context.Context, execRaw json.RawMessage, param
 // httpProxyTransport builds a Transport for the http tool's proxy config, or nil (direct).
 func (s *Server) httpProxyTransport(spec httpExec) *http.Transport {
 	proxyStr := strings.TrimSpace(spec.Proxy)
-	if proxyStr == "" {
+	if proxyStr == "" && s != nil && s.m != nil {
 		proxyStr = s.m.GlobalProxy()
 	}
 	if proxyStr == "" {
