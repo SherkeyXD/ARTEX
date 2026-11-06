@@ -1551,3 +1551,9 @@ export interface TaskContextMetricsReport {
   turns: EvolutionTurn[];
   fleet: FleetAgent[];
 }
+
+export interface GlobalContextMetricsReport {
+  summary: ContextSummary;
+  composition: ContextComposition;
+  fleet: FleetAgent[];
+}
