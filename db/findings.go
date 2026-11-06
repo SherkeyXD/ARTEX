@@ -142,6 +142,58 @@ func (d *DB) ListFindings(limit int) ([]*DBFinding, error) {
 	return scanFindings(rows)
 }
 
+// DashboardFindingRow is one recent finding for the dashboard, without evidence.
+type DashboardFindingRow struct {
+	ID              int64
+	VulnClass       string
+	Severity        string
+	Summary         string
+	TaskDescription string
+	CreatedAt       time.Time
+}
+
+// DashboardFindings returns an exact severity breakdown plus the newest findings.
+// Evidence is omitted: the dashboard only renders class, summary, and time.
+func (d *DB) DashboardFindings(limit int) (int, FindingSeverityCounts, []DashboardFindingRow, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	var total int
+	var counts FindingSeverityCounts
+	err := d.QueryRow(`SELECT
+		COUNT(*),
+		COUNT(*) FILTER (WHERE severity = 'critical'),
+		COUNT(*) FILTER (WHERE severity = 'high'),
+		COUNT(*) FILTER (WHERE severity = 'medium'),
+		COUNT(*) FILTER (WHERE severity = 'low')
+		FROM findings`).Scan(&total, &counts.Critical, &counts.High, &counts.Medium, &counts.Low)
+	if err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	rows, err := d.Query(`
+		SELECT f.id, f.vulnclass, f.severity, f.summary, COALESCE(t.description, ''), f.created_at
+		FROM findings f
+		LEFT JOIN tasks t ON f.task_id = t.id
+		ORDER BY f.created_at DESC, f.id DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	defer rows.Close()
+	recent := []DashboardFindingRow{}
+	for rows.Next() {
+		var row DashboardFindingRow
+		if err := rows.Scan(&row.ID, &row.VulnClass, &row.Severity, &row.Summary, &row.TaskDescription, &row.CreatedAt); err != nil {
+			return 0, FindingSeverityCounts{}, nil, err
+		}
+		recent = append(recent, row)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	return total, counts, recent, nil
+}
+
 // FindingFilter narrows a paginated findings query. Empty-string fields mean "no
 // filter on that column". Sort is "severity" (severity desc, then newest) or
 // anything else (newest first).

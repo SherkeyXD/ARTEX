@@ -1547,6 +1547,33 @@ FROM activity WHERE exploration_id=$1 AND id>$2 ORDER BY id LIMIT $3`, s.expID, 
 	return out, cursor, rows.Err()
 }
 
+// RecentActivity returns the newest activity rows across every exploration,
+// without detail bodies. usage rows are omitted because the dashboard hides them.
+func (d *DB) RecentActivity(limit int) ([]Activity, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+	rows, err := d.Query(`
+SELECT id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(summary,''), created_at
+FROM activity
+WHERE kind IS DISTINCT FROM 'usage'
+ORDER BY id DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Activity{}
+	for rows.Next() {
+		var a Activity
+		if err := rows.Scan(&a.ID, &a.Worker, &a.Kind, &a.Tool, &a.Summary, &a.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // ActivityListForTerminalIntent is the inherited, incremental-read boundary.
 // The intent state check and activity read happen in one statement so a source
 // intent reopened between API-level checks cannot expose its new in-flight trace.

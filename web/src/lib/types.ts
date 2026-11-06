@@ -41,6 +41,68 @@ export interface Task {
   coverage_enabled?: boolean; // 资产覆盖度功能开关(创建时定,默认开)；false=不计算/不展示覆盖度
 }
 
+export interface DashboardTask {
+  id: string;
+  description: string;
+  status: TaskStatus;
+  engine_mode?: EngineMode;
+  goals_total?: number;
+  goals_met?: number;
+  in_flight?: number;
+  last_activity_unix?: number;
+  created_unix?: number;
+}
+
+export interface DashboardFinding {
+  id: string;
+  vulnclass: string;
+  severity: Severity;
+  summary: string;
+  task_description?: string;
+  ts: string;
+}
+
+export interface DashboardTokenBucket {
+  profile_id?: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  task_count: number;
+}
+
+export interface DashboardDailyTokens {
+  profile_id?: number;
+  date: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+}
+
+export interface DashboardSummary {
+  llm_configured: boolean;
+  tasks: {
+    total: number;
+    by_status: Record<string, number>;
+    recent: DashboardTask[];
+    latest_id: string;
+  };
+  findings: {
+    total: number;
+    by_severity: { critical: number; high: number; medium: number; low: number };
+    recent: DashboardFinding[];
+  };
+  pending: {
+    total: number;
+    items: { id: number; agent_name: string; tool_name: string }[];
+  };
+  activity: Activity[];
+  legacy_tokens: {
+    by_profile: DashboardTokenBucket[];
+    daily: DashboardDailyTokens[];
+  };
+}
+
 export interface TaskCategory {
   id: number;
   name: string;

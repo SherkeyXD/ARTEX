@@ -29,6 +29,7 @@ import type {
   CoverageAssetRefs,
   CoverageGraphData,
   DailyTokenBucket,
+  DashboardSummary,
   DeleteTaskOptions,
   DeleteTaskResult,
   Edge,
@@ -43,6 +44,7 @@ import type {
   FindingStats,
   FindingStatus,
   FindingsPage,
+  GlobalContextMetricsReport,
   IntentAsset,
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -78,7 +80,6 @@ import type {
   TaskAssetScopeMutation,
   TaskCategory,
   TaskConstraint,
-  GlobalContextMetricsReport,
   TaskContextMetricsReport,
   TaskGoal,
   TaskLLMResolutions,
@@ -235,6 +236,7 @@ export const api = {
   // ---- tasks ----
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
+  dashboardSummary: () => get<DashboardSummary>("/dashboard/summary"),
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
   createTask: (input: {
     name?: string;

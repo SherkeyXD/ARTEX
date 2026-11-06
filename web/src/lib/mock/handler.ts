@@ -853,6 +853,108 @@ function sortMockTasks() {
   });
 }
 
+function mockDashboardSummary() {
+  sortMockTasks();
+  const byStatus: Record<string, number> = {};
+  const byProfile = new Map<
+    string,
+    {
+      profile_id?: number;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      cache_write_tokens: number;
+      task_count: number;
+    }
+  >();
+  const daily = new Map<
+    string,
+    { profile_id?: number; date: string; input_tokens: number; output_tokens: number; cache_read_tokens: number }
+  >();
+  for (const task of mockTasks) {
+    byStatus[task.status] = (byStatus[task.status] ?? 0) + 1;
+    const key = task.llm_profile_id == null ? "none" : String(task.llm_profile_id);
+    const profile = byProfile.get(key) ?? {
+      profile_id: task.llm_profile_id,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      task_count: 0,
+    };
+    profile.input_tokens += task.tokens?.input_tokens ?? 0;
+    profile.output_tokens += task.tokens?.output_tokens ?? 0;
+    profile.cache_read_tokens += task.tokens?.cache_read_tokens ?? 0;
+    profile.cache_write_tokens += task.tokens?.cache_write_tokens ?? 0;
+    profile.task_count += 1;
+    byProfile.set(key, profile);
+    const date = (task.created_at ?? "").slice(0, 10);
+    const dayKey = `${key}|${date}`;
+    const day = daily.get(dayKey) ?? {
+      profile_id: task.llm_profile_id,
+      date,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+    };
+    day.input_tokens += task.tokens?.input_tokens ?? 0;
+    day.output_tokens += task.tokens?.output_tokens ?? 0;
+    day.cache_read_tokens += task.tokens?.cache_read_tokens ?? 0;
+    daily.set(dayKey, day);
+  }
+  const bySeverity = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const finding of mockFindings) {
+    if (finding.severity in bySeverity) bySeverity[finding.severity as keyof typeof bySeverity] += 1;
+  }
+  const pending = mockInterceptPending.filter((row) => row.status === "pending");
+  return {
+    llm_configured: true,
+    tasks: {
+      total: mockTasks.length,
+      by_status: byStatus,
+      recent: [...mockTasks]
+        .sort((a, b) => (b.last_activity_unix ?? 0) - (a.last_activity_unix ?? 0))
+        .slice(0, 5)
+        .map((task) => ({
+          id: task.id,
+          description: task.description,
+          status: task.status,
+          engine_mode: task.engine_mode ?? "idle",
+          goals_total: task.goals_total ?? 0,
+          goals_met: task.goals_met ?? 0,
+          in_flight: task.in_flight ?? 0,
+          last_activity_unix: task.last_activity_unix ?? 0,
+          created_unix: task.created_unix ?? 0,
+        })),
+      latest_id: mockTasks[0]?.id ?? "",
+    },
+    findings: {
+      total: mockFindings.length,
+      by_severity: bySeverity,
+      recent: [...mockFindings]
+        .sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
+        .slice(0, 8)
+        .map((finding) => ({
+          id: finding.id,
+          vulnclass: finding.vulnclass,
+          severity: finding.severity,
+          summary: finding.summary,
+          task_description: finding.task_description,
+          ts: finding.ts,
+        })),
+    },
+    pending: {
+      total: pending.length,
+      items: pending.slice(0, 3).map((row) => ({ id: row.id, agent_name: row.agent_name, tool_name: row.tool_name })),
+    },
+    activity: D.activity.filter((item) => item.kind !== "usage").slice(0, 30),
+    legacy_tokens: {
+      by_profile: [...byProfile.values()],
+      daily: [...daily.values()],
+    },
+  };
+}
+
 function normalizedTemplateName(value: unknown): string {
   return String(value ?? "")
     .trim()
@@ -1036,6 +1138,7 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
     sortMockTasks();
     return { tasks: mockTasks.map(publicMockTask), active: mockActiveTask };
   }
+  if (path === "/dashboard/summary" && m === "GET") return mockDashboardSummary();
   if (path === "/tasks" && m === "POST") {
     let suffix = 1;
     while (mockTasks.some((item) => item.id === `t-new-${suffix}`)) suffix++;
@@ -1930,7 +2033,8 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       const limit = Math.max(1, Number(q.get("limit") ?? 300));
       let list = mockIntents;
       if (before > 0) list = list.filter((intent) => Number(intent.id.replace(/\D/g, "") || intent.id) < before);
-      return { items: list.slice(0, limit), has_more: list.length > limit };
+      const page = list.slice(0, limit);
+      return { items: page, has_more: list.length > limit };
     }
     return mockIntents;
   }
