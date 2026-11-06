@@ -296,6 +296,70 @@ func (d *DB) ListAllInterceptsPage(page, size int, filter InterceptApprovalFilte
 	return d.listInterceptsPage("", page, size, filter)
 }
 
+// DashboardPendingItem is the slim pending-approval row the dashboard renders.
+type DashboardPendingItem struct {
+	ID        int64
+	AgentName string
+	ToolName  string
+}
+
+// DashboardPending returns the pending-approval count and the newest few rows,
+// without tool input payloads.
+func (d *DB) DashboardPending(limit int) (int, []DashboardPendingItem, error) {
+	if limit <= 0 || limit > 20 {
+		limit = 3
+	}
+	var total int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM intercept_pending WHERE status='pending'`).Scan(&total); err != nil {
+		return 0, nil, err
+	}
+	rows, err := d.Query(`
+SELECT id, COALESCE(agent_name,''), COALESCE(tool_name,'')
+FROM intercept_pending
+WHERE status='pending'
+ORDER BY created_at DESC
+LIMIT $1`, limit)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer rows.Close()
+	items := []DashboardPendingItem{}
+	for rows.Next() {
+		var item DashboardPendingItem
+		if err := rows.Scan(&item.ID, &item.AgentName, &item.ToolName); err != nil {
+			return 0, nil, err
+		}
+		items = append(items, item)
+	}
+	return total, items, rows.Err()
+}
+
+// PendingInterceptAgents returns agent names of pending approvals for one task.
+func (d *DB) PendingInterceptAgents(taskID string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := d.Query(`
+SELECT COALESCE(agent_name,'')
+FROM intercept_pending
+WHERE task_id=$1 AND status='pending'
+ORDER BY created_at DESC
+LIMIT $2`, taskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // ListTaskIntercepts returns all intercept_pending rows for a specific task (newest first).
 func (d *DB) ListTaskIntercepts(taskID string) ([]InterceptApprovalRow, error) {
 	rows, err := d.Query(approvalRowSelect+` WHERE ip.task_id=$1 ORDER BY ip.created_at DESC`, taskID)

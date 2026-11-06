@@ -106,18 +106,10 @@ func (s *Server) taskLLMResolutionHandler(w http.ResponseWriter, r *http.Request
 		writeErr(w, 404, "task not found")
 		return
 	}
-	roles := map[string]taskLLMResolution{}
-	for responseKey, agentKey := range map[string]string{
-		"mainagent": "mainagent",
-		"planner":   "planner",
-		"worker":    "worker",
-	} {
-		resolved, err := s.resolveTaskRoleLLM(t, agentKey)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		roles[responseKey] = resolved
+	roles, err := s.taskRoleResolutions(t)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, roles)
 }

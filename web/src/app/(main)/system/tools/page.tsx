@@ -27,6 +27,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { AgentHubNav } from "@/components/agent-hub-nav";
 import {
   Sheet,
   SheetContent,
@@ -384,21 +385,19 @@ export default function ToolsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">工具</h1>
-          <p className="text-muted-foreground text-sm">系统工具的描述/绑定，以及自定义工具(command/script/http)</p>
-        </div>
-        <div className="relative w-64">
-          <SearchIcon className="text-muted-foreground absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2" />
-          <Input
-            className="h-8 pl-8 text-sm"
-            placeholder="搜索工具名、描述、Agent…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      </div>
+      <AgentHubNav
+        action={
+          <div className="relative w-64">
+            <SearchIcon className="text-muted-foreground absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2" />
+            <Input
+              className="h-8 pl-8 text-sm"
+              placeholder="搜索工具名、描述、Agent…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+        }
+      />
 
       <Tabs defaultValue="system">
         <TabsList>

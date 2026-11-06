@@ -29,6 +29,7 @@ import type {
   CoverageAssetRefs,
   CoverageGraphData,
   DailyTokenBucket,
+  DashboardSummary,
   DeleteTaskOptions,
   DeleteTaskResult,
   Edge,
@@ -43,6 +44,7 @@ import type {
   FindingStats,
   FindingStatus,
   FindingsPage,
+  GlobalContextMetricsReport,
   IntentAsset,
   InterceptApprovalFilter,
   InterceptApprovalRow,
@@ -78,7 +80,6 @@ import type {
   TaskAssetScopeMutation,
   TaskCategory,
   TaskConstraint,
-  GlobalContextMetricsReport,
   TaskContextMetricsReport,
   TaskGoal,
   TaskLLMResolutions,
@@ -235,6 +236,20 @@ export const api = {
   // ---- tasks ----
   tasks: () =>
     get<{ tasks: Task[]; active: string }>("/tasks").then((r) => ({ tasks: arr(r.tasks), active: r.active ?? "" })),
+  dashboardSummary: () => get<DashboardSummary>("/dashboard/summary"),
+  sessionLive: (taskId: string) =>
+    get<{
+      chat_running: boolean;
+      tokens: { total: TokenTotal; sessions: SessionTokenUsage[] };
+      llm: TaskLLMResolutions;
+      pending_intercepts: { agent_name: string }[];
+    }>(`/tasks/${encodeURIComponent(taskId)}/session-live`).then((r) => ({
+      chatRunning: !!r.chat_running,
+      total: r.tokens?.total,
+      sessions: arr(r.tokens?.sessions),
+      llm: r.llm,
+      pendingIntercepts: arr(r.pending_intercepts),
+    })),
   task: (id: string) => get<Task>(`/tasks/${encodeURIComponent(id)}`),
   createTask: (input: {
     name?: string;
@@ -676,14 +691,19 @@ export const api = {
   },
   // Paged worker (intent) session list — reaches past the legacy fixed 300 cap.
   // before=0 → newest page; before=<id> → older page. has_more = older intents exist.
-  intentsPage: (task: string, before = 0, limit = 300) => {
+  intentsPage: (task: string, before = 0, limit = 300, rev = "") => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (task) q.set("task", task);
     q.set("before", String(before > 0 ? before : 0));
     q.set("page", "1"); // marker so the backend returns the paged {items,has_more} shape
-    return get<{ items: TaskNode[]; has_more: boolean }>(`/exploration/intents?${q.toString()}`).then((r) => ({
+    if (rev) q.set("rev", rev);
+    return get<{ items?: TaskNode[]; has_more?: boolean; rev?: string; unchanged?: boolean }>(
+      `/exploration/intents?${q.toString()}`,
+    ).then((r) => ({
       items: arr(r.items),
       hasMore: !!r.has_more,
+      rev: r.rev ?? "",
+      unchanged: !!r.unchanged,
     }));
   },
 

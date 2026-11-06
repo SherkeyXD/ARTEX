@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { AgentEditor } from "@/components/agent-editor";
+import { AgentHubNav } from "@/components/agent-hub-nav";
 import { api } from "@/lib/api";
 import type { Agent } from "@/lib/types";
 
@@ -221,20 +222,16 @@ export default function AgentsPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Agent</h1>
-          <p className="text-muted-foreground text-sm">
-            内置 Agent 的提示词/配置，以及自定义会话 Agent 的创建与管理
-          </p>
-        </div>
-        <CreateAgentDialog
-          onCreated={(key) => {
-            reload();
-            setEditKey(key);
-          }}
-        />
-      </div>
+      <AgentHubNav
+        action={
+          <CreateAgentDialog
+            onCreated={(key) => {
+              reload();
+              setEditKey(key);
+            }}
+          />
+        }
+      />
 
       <Card>
         <CardHeader>

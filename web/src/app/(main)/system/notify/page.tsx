@@ -15,6 +15,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { SettingsHubNav } from "@/components/settings-hub-nav";
 import { api } from "@/lib/api";
 import type { NotificationChannel, NotificationFilter, NotificationMeta } from "@/lib/types";
 
@@ -265,27 +266,21 @@ export default function NotifyPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">通知推送</h1>
-          <p className="text-muted-foreground text-sm">
-            发现漏洞时推送到钉钉 / 飞书 / 企业微信等渠道 · 每个渠道可独立设推送时机与过滤规则
-          </p>
-        </div>
-        {meta && (
-          // 用 div 而不是 label：Switch 自带 aria-label，外面再套一层 label
-          // 既关联不到任何原生控件，又会让点击文字看起来应该能切换。
-          <div className="flex shrink-0 items-center gap-2 text-sm">
-            <span className="text-muted-foreground">总开关</span>
-            <Switch
-              checked={meta.enabled}
-              disabled={globalSaving}
-              onCheckedChange={toggleGlobal}
-              aria-label="推送总开关"
-            />
-          </div>
-        )}
-      </div>
+      <SettingsHubNav
+        action={
+          meta && (
+            <div className="flex shrink-0 items-center gap-2 text-sm">
+              <span className="text-muted-foreground">总开关</span>
+              <Switch
+                checked={meta.enabled}
+                disabled={globalSaving}
+                onCheckedChange={toggleGlobal}
+                aria-label="推送总开关"
+              />
+            </div>
+          )
+        }
+      />
 
       {meta && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

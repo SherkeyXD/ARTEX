@@ -42,19 +42,10 @@ import { useVisibilityPoll } from "@/hooks/use-visibility-poll";
 import { api } from "@/lib/api";
 import type {
   Activity,
-  Agent,
   ConvTokenSummary,
-  Finding,
+  DashboardSummary,
   GlobalContextMetricsReport,
-  InterceptPending,
   LLMProfile,
-  MCPServer,
-  Settings,
-  SkillItem,
-  Stats,
-  Task,
-  TokenTotal,
-  Tool,
   UsageStats,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -158,111 +149,51 @@ function SectionTitle({
 // ── page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  // data state
-  const [tasks, setTasks] = React.useState<Task[]>([]);
-  const [findings, setFindings] = React.useState<Finding[]>([]);
-  const [stats, setStats] = React.useState<Stats | null>(null);
-  const [settings, setSettings] = React.useState<Settings | null>(null);
-  const [pending, setPending] = React.useState<InterceptPending[]>([]);
-  const [activity, setActivity] = React.useState<Activity[]>([]);
-  const [tokens, setTokens] = React.useState<TokenTotal | null>(null);
+  const [summary, setSummary] = React.useState<DashboardSummary | null>(null);
   const [convTokens, setConvTokens] = React.useState<ConvTokenSummary[]>([]);
   const [usageStats, setUsageStats] = React.useState<UsageStats | null>(null);
   const [assetCounts, setAssetCounts] = React.useState<Record<string, number>>({});
-  const [agents, setAgents] = React.useState<Agent[]>([]);
-  const [mcpServers, setMcpServers] = React.useState<MCPServer[]>([]);
-  const [skills, setSkills] = React.useState<SkillItem[]>([]);
-  const [tools, setTools] = React.useState<Tool[]>([]);
   const [llmProfiles, setLLMProfiles] = React.useState<LLMProfile[]>([]);
   const [contextMetrics, setContextMetrics] = React.useState<GlobalContextMetricsReport | null>(null);
 
-  // The task list is the most expensive dashboard source. Poll it independently
-  // when the page is visible so a large history cannot hold back every other dashboard panel.
-  const taskSigRef = React.useRef("");
+  // One summary replaces the full task list, the 500-row findings payload, stats,
+  // pending approvals, and the activity feed.
+  const summarySigRef = React.useRef("");
   useVisibilityPoll(async () => {
     try {
-      const tr = await api.tasks();
-      const nextSignature = JSON.stringify(tr.tasks);
-      if (nextSignature !== taskSigRef.current) {
-        taskSigRef.current = nextSignature;
-        setTasks(tr.tasks);
-      }
+      const next = await api.dashboardSummary();
+      const sig = JSON.stringify(next);
+      if (sig === summarySigRef.current) return;
+      summarySigRef.current = sig;
+      setSummary(next);
     } catch {
       /* transient errors — next poll retries */
     }
   }, 5000);
 
-  // The remaining fast sources stay batched with dirty checking so unchanged polls do not re-render.
-  const fastSigRef = React.useRef("");
-  useVisibilityPoll(async () => {
-    try {
-      const [findings, stats, settings, pending, activity, tokens, conversationTokens] = await Promise.all([
-        api.findings(),
-        api.stats(),
-        api.settings(),
-        api.interceptPending(),
-        api.activity(undefined, { limit: 30 }),
-        api.tokenStats(),
-        api.conversationTokens(),
-      ]);
-      const nextSig = JSON.stringify([
-        findings.length,
-        findings[0]?.id,
-        findings[0]?.ts,
-        stats,
-        settings,
-        pending.length,
-        activity.items[0]?.seq,
-        activity.items.length,
-        tokens.total,
-        conversationTokens,
-      ]);
-      if (nextSig === fastSigRef.current) return;
-      fastSigRef.current = nextSig;
-      setFindings(findings);
-      setStats(stats);
-      setSettings(settings);
-      setPending(pending);
-      setActivity(activity.items);
-      setTokens(tokens.total ?? null);
-      setConvTokens(conversationTokens);
-    } catch {
-      // Preserve stale data and retry on the next interval.
-    }
-  }, 5000);
-
-  // slow poll: assets, system-static (every 15s) with dirty checking
+  // Usage, profiles, assets, and conversation tokens change slower than task state.
   const slowSigRef = React.useRef("");
   useVisibilityPoll(async () => {
     try {
-      const [counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
+      const [counts, profileList, usage, conversationTokens] = await Promise.all([
         api.assetCounts(),
-        api.agents(),
-        api.mcpServers(),
-        api.skills(),
-        api.tools(),
         api.llmProfiles(),
         api.usageStats(365),
+        api.conversationTokens(),
       ]);
       const nextSig = JSON.stringify([
         counts,
-        agentList.length,
-        mcpList.length,
-        skillList.length,
-        toolList.length,
         profileList.length,
         usage?.daily?.length,
         usage?.by_profile?.length,
+        conversationTokens,
       ]);
       if (nextSig === slowSigRef.current) return;
       slowSigRef.current = nextSig;
       setAssetCounts(counts ?? {});
-      setAgents(agentList);
-      setMcpServers(mcpList);
-      setSkills(skillList);
-      setTools(toolList);
       setLLMProfiles(profileList);
       setUsageStats(usage);
+      setConvTokens(conversationTokens);
     } catch {
       /* transient errors */
     }
@@ -284,32 +215,16 @@ export default function DashboardPage() {
 
   // ── derived ───────────────────────────────────────────────────────────────
 
-  const tasksByStatus = React.useMemo(() => {
-    const m: Record<string, number> = {};
-    for (const t of tasks) m[t.status] = (m[t.status] ?? 0) + 1;
-    return m;
-  }, [tasks]);
-
-  const findingsBySev = React.useMemo(() => {
-    const m = { critical: 0, high: 0, medium: 0, low: 0 };
-    for (const f of findings) {
-      if (f.severity in m) m[f.severity as keyof typeof m]++;
-    }
-    return m;
-  }, [findings]);
-
-  const sortedTasks = React.useMemo(
-    () =>
-      [...tasks]
-        .sort((a, b) => (b.last_activity_unix ?? b.created_unix ?? 0) - (a.last_activity_unix ?? a.created_unix ?? 0))
-        .slice(0, 5),
-    [tasks],
-  );
-
-  const recentFindings = React.useMemo(
-    () => [...findings].sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts)).slice(0, 8),
-    [findings],
-  );
+  const tasksByStatus = summary?.tasks.by_status ?? {};
+  const taskTotal = summary?.tasks.total ?? 0;
+  const sortedTasks = summary?.tasks.recent ?? [];
+  const findingsTotal = summary?.findings.total ?? 0;
+  const findingsBySev = summary?.findings.by_severity ?? { critical: 0, high: 0, medium: 0, low: 0 };
+  const recentFindings = summary?.findings.recent ?? [];
+  const activity = summary?.activity ?? [];
+  const pending = summary?.pending.items ?? [];
+  const pendingCount = summary?.pending.total ?? 0;
+  const llmConfigured = summary?.llm_configured ?? false;
 
   const recentActivity = React.useMemo(
     () =>
@@ -334,8 +249,6 @@ export default function DashboardPage() {
 
   // system
   const activeProfile = llmProfiles.find((p) => p.is_default);
-  const enabledTools = tools.filter((t) => t.enabled);
-  const pendingCount = pending.length;
 
   // ── token stats per LLM profile ──────────────────────────────────────────
   // tasks whose llm_profile_id is null/undefined used the active default profile
@@ -358,24 +271,24 @@ export default function DashboardPage() {
   // 旧版：按 profile 归桶（来自 activity 的 task.tokens + 会话用量）。
   const tokenByProfileOld = React.useMemo<Map<number | null, Bucket>>(() => {
     const m = new Map<number | null, Bucket>();
-    const fold = (key: number | null, inp: number, out: number, cr: number, cw: number, addTask: boolean) => {
+    const fold = (key: number | null, inp: number, out: number, cr: number, cw: number, tasks: number) => {
       const prev = m.get(key) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, taskCount: 0 };
       m.set(key, {
         input: prev.input + inp,
         output: prev.output + out,
         cacheRead: prev.cacheRead + cr,
         cacheWrite: prev.cacheWrite + cw,
-        taskCount: prev.taskCount + (addTask ? 1 : 0),
+        taskCount: prev.taskCount + tasks,
       });
     };
-    for (const t of tasks) {
+    for (const bucket of summary?.legacy_tokens.by_profile ?? []) {
       fold(
-        t.llm_profile_id ?? defaultProfileId,
-        t.tokens?.input_tokens ?? 0,
-        t.tokens?.output_tokens ?? 0,
-        t.tokens?.cache_read_tokens ?? 0,
-        t.tokens?.cache_write_tokens ?? 0,
-        true,
+        bucket.profile_id ?? defaultProfileId,
+        bucket.input_tokens,
+        bucket.output_tokens,
+        bucket.cache_read_tokens,
+        bucket.cache_write_tokens,
+        bucket.task_count,
       );
     }
     for (const c of convTokens) {
@@ -385,11 +298,11 @@ export default function DashboardPage() {
         c.output_tokens,
         c.cache_read_tokens,
         c.cache_write_tokens,
-        false,
+        0,
       );
     }
     return m;
-  }, [tasks, convTokens, defaultProfileId]);
+  }, [summary, convTokens, defaultProfileId]);
 
   // 新版：按 profile 归桶（来自 llm_usage 全局聚合，逐次调用精确）。
   const tokenByProfileNew = React.useMemo<Map<number | null, Bucket>>(() => {
@@ -444,21 +357,16 @@ export default function DashboardPage() {
       const prev = m.get(date) ?? { input: 0, output: 0, cacheRead: 0 };
       m.set(date, { input: prev.input + inp, output: prev.output + out, cacheRead: prev.cacheRead + cr });
     };
-    for (const t of tasks) {
-      if (tokenTab !== "all" && (t.llm_profile_id ?? defaultProfileId) !== tokenTab) continue;
-      fold(
-        t.created_at.slice(0, 10),
-        t.tokens?.input_tokens ?? 0,
-        t.tokens?.output_tokens ?? 0,
-        t.tokens?.cache_read_tokens ?? 0,
-      );
+    for (const day of summary?.legacy_tokens.daily ?? []) {
+      if (tokenTab !== "all" && (day.profile_id ?? defaultProfileId) !== tokenTab) continue;
+      fold(day.date, day.input_tokens, day.output_tokens, day.cache_read_tokens);
     }
     for (const c of convTokens) {
       if (tokenTab !== "all" && (c.llm_profile_id ?? defaultProfileId) !== tokenTab) continue;
       fold(c.created_at.slice(0, 10), c.input_tokens, c.output_tokens, c.cache_read_tokens);
     }
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date: date.slice(5), ...v }));
-  }, [tasks, convTokens, tokenDays, tokenTab, defaultProfileId]);
+  }, [summary, convTokens, tokenDays, tokenTab, defaultProfileId]);
 
   // 新版每日：来自 llm_usage 的真实每日消耗（ts 是实际调用时刻）。
   const dailyTokenDataNew = React.useMemo(() => {
@@ -522,14 +430,14 @@ export default function DashboardPage() {
             </div>
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-semibold tabular-nums">{tasksByStatus.running ?? 0}</span>
-              <span className="text-xs text-muted-foreground">/ {tasks.length}</span>
+              <span className="text-xs text-muted-foreground">/ {taskTotal}</span>
             </div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[10px]">
             {(tasksByStatus.running ?? 0) > 0 && <span className="text-blue-400">探索 {tasksByStatus.running}</span>}
             {(tasksByStatus.paused ?? 0) > 0 && <span className="text-amber-400">暂停 {tasksByStatus.paused}</span>}
             {(tasksByStatus.done ?? 0) > 0 && <span className="text-emerald-400">完成 {tasksByStatus.done}</span>}
-            {tasks.length === 0 && <span className="text-muted-foreground">暂无任务</span>}
+            {taskTotal === 0 && <span className="text-muted-foreground">暂无任务</span>}
           </CardContent>
         </Card>
 
@@ -539,7 +447,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
               <BugIcon className="size-3" /> 确认发现
             </div>
-            <div className="text-2xl font-semibold tabular-nums">{findings.length}</div>
+            <div className="text-2xl font-semibold tabular-nums">{findingsTotal}</div>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2.5 text-[10px]">
             <span className="text-rose-500">严重 {findingsBySev.critical}</span>
@@ -955,9 +863,9 @@ export default function DashboardPage() {
               )}
             </div>
 
-            {tasks.length > 0 && (
+            {summary?.tasks.latest_id && (
               <Link
-                href={`/function/tasks/detail?id=${tasks[0].id}&tab=context`}
+                href={`/function/tasks/detail?id=${summary.tasks.latest_id}&tab=context`}
                 className="flex items-center gap-1 text-primary hover:underline font-medium text-[10px]"
               >
                 查看最新任务完整上下文瀑布流 <ChevronRightIcon className="size-3" />
@@ -1084,7 +992,7 @@ export default function DashboardPage() {
             任务
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground">{tasks.length} 个任务</span>
+            <span className="text-[10px] text-muted-foreground">{taskTotal} 个任务</span>
             <Link
               href="/function/tasks"
               className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
@@ -1207,12 +1115,12 @@ export default function DashboardPage() {
                 variant="outline"
                 className={cn(
                   "text-[10px]",
-                  stats?.llm_configured
+                  llmConfigured
                     ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
                     : "border-red-500/30 bg-red-500/10 text-red-400",
                 )}
               >
-                {stats?.llm_configured ? "已配置" : "未配置"}
+                {llmConfigured ? "已配置" : "未配置"}
               </Badge>
             </div>
 

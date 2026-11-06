@@ -647,6 +647,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)
+	mux.HandleFunc("GET /api/dashboard/summary", s.dashboardSummary)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
 	mux.HandleFunc("GET /api/logs/history", s.getLogsHistory)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs)
@@ -793,6 +794,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chat", s.chat)
 	mux.HandleFunc("POST /api/chat/upload", s.chatUpload) // 方式1 文件上传:落到会话/任务工作目录 uploads/
 	mux.HandleFunc("GET /api/tasks/{id}/chat/status", s.taskChatStatus)
+	mux.HandleFunc("GET /api/tasks/{id}/session-live", s.taskSessionLive)
 	mux.HandleFunc("POST /api/tasks/{id}/chat/stop", s.stopChat)
 
 	// --- 管理后台 API (PostgreSQL 数据源; 新版数据库与管理后台方案) ---
@@ -2349,6 +2351,15 @@ func (s *Server) intents(w http.ResponseWriter, r *http.Request) {
 	// worker session list can reach past the old fixed 300 boundary on scroll. It
 	// also includes immutable intent results from directly related tasks; those
 	// rows never participate in this task's frontier or claim path.
+	rev, err := intentHistoryRevision(t)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if given := q.Get("rev"); given != "" && given == rev && atoiDefault(q.Get("before"), 0) == 0 {
+		writeJSON(w, 200, map[string]any{"unchanged": true, "rev": rev})
+		return
+	}
 	before := int64(atoiDefault(q.Get("before"), 0))
 	in, hasMore, err := taskIntentHistoryPage(t.Store, before, limit, false, 0)
 	if err != nil {
@@ -2375,7 +2386,7 @@ func (s *Server) intents(w http.ResponseWriter, r *http.Request) {
 		in = in[:limit]
 		hasMore = true
 	}
-	writeJSON(w, 200, map[string]any{"items": taskNodeDTOs(in), "has_more": hasMore})
+	writeJSON(w, 200, map[string]any{"items": taskNodeDTOs(in), "has_more": hasMore, "rev": rev})
 }
 
 func inheritedIntentResult(state string) bool {

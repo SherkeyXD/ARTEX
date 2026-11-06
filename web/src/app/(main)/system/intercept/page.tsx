@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { SecurityHubNav } from "@/components/security-hub-nav";
 import {
   Select,
   SelectContent,
@@ -604,17 +605,7 @@ export default function InterceptPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-6">
-
-      {/* ---- header ---- */}
-      <div className="flex items-center gap-2.5">
-        <ShieldAlertIcon className="h-5 w-5 shrink-0" />
-        <div>
-          <h1 className="text-lg font-semibold leading-tight">命令拦截</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            工具执行前先按拦截规则匹配；未命中的命令可交由模型兜底判定
-          </p>
-        </div>
-      </div>
+      <SecurityHubNav />
 
       {/* ---- 拦截范围信息条（规则匹配与模型兜底共用：不在范围内的工具两者都不介入）---- */}
       <div

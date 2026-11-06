@@ -142,6 +142,58 @@ func (d *DB) ListFindings(limit int) ([]*DBFinding, error) {
 	return scanFindings(rows)
 }
 
+// DashboardFindingRow is one recent finding for the dashboard, without evidence.
+type DashboardFindingRow struct {
+	ID              int64
+	VulnClass       string
+	Severity        string
+	Summary         string
+	TaskDescription string
+	CreatedAt       time.Time
+}
+
+// DashboardFindings returns an exact severity breakdown plus the newest findings.
+// Evidence is omitted: the dashboard only renders class, summary, and time.
+func (d *DB) DashboardFindings(limit int) (int, FindingSeverityCounts, []DashboardFindingRow, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	var total int
+	var counts FindingSeverityCounts
+	err := d.QueryRow(`SELECT
+		COUNT(*),
+		COUNT(*) FILTER (WHERE severity = 'critical'),
+		COUNT(*) FILTER (WHERE severity = 'high'),
+		COUNT(*) FILTER (WHERE severity = 'medium'),
+		COUNT(*) FILTER (WHERE severity = 'low')
+		FROM findings`).Scan(&total, &counts.Critical, &counts.High, &counts.Medium, &counts.Low)
+	if err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	rows, err := d.Query(`
+		SELECT f.id, f.vulnclass, f.severity, f.summary, COALESCE(t.description, ''), f.created_at
+		FROM findings f
+		LEFT JOIN tasks t ON f.task_id = t.id
+		ORDER BY f.created_at DESC, f.id DESC
+		LIMIT $1`, limit)
+	if err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	defer rows.Close()
+	recent := []DashboardFindingRow{}
+	for rows.Next() {
+		var row DashboardFindingRow
+		if err := rows.Scan(&row.ID, &row.VulnClass, &row.Severity, &row.Summary, &row.TaskDescription, &row.CreatedAt); err != nil {
+			return 0, FindingSeverityCounts{}, nil, err
+		}
+		recent = append(recent, row)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, FindingSeverityCounts{}, nil, err
+	}
+	return total, counts, recent, nil
+}
+
 // FindingFilter narrows a paginated findings query. Empty-string fields mean "no
 // filter on that column". Sort is "severity" (severity desc, then newest) or
 // anything else (newest first).
@@ -447,8 +499,8 @@ func (s *ExplorationStore) AddFindingFollowUpIntent(findingID, findingNodeID int
 		metadata = json.RawMessage(`{}`)
 	}
 	if err := tx.QueryRow(`
-INSERT INTO activity(exploration_id, node_id, worker, kind, tool, tool_use_id, is_error, summary, detail, metadata, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,NULLIF($8,''),NULLIF($9,''),$10,$11,$12,$13,$14)
+INSERT INTO activity(exploration_id, node_id, worker, kind, tool, tool_use_id, is_error, summary, detail, detail_chars, metadata, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,NULLIF($8,''),NULLIF($9,''),char_length(COALESCE($9,'')),$10,$11,$12,$13,$14)
 RETURNING id, created_at`, s.expID, audit.NodeID, utf8Clean(audit.Worker), utf8Clean(audit.Kind), utf8Clean(audit.Tool), utf8Clean(audit.ToolUseID), audit.IsError,
 		utf8Clean(audit.Summary), utf8Clean(audit.Detail), metadata, audit.InputTokens, audit.OutputTokens, audit.CacheReadTokens, audit.CacheWriteTokens).
 		Scan(&audit.ID, &audit.CreatedAt); err != nil {

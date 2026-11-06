@@ -16,6 +16,7 @@ import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetT
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { SecurityHubNav } from "@/components/security-hub-nav";
 import { api } from "@/lib/api";
 import type { AssetInterceptKind, AssetInterceptRule } from "@/lib/types";
 
@@ -176,16 +177,7 @@ export default function AssetInterceptPage() {
 
   return (
     <div className="flex flex-1 flex-col gap-5 p-6">
-      {/* header */}
-      <div className="flex items-center gap-2.5">
-        <BanIcon className="h-5 w-5 shrink-0" />
-        <div>
-          <h1 className="text-lg font-semibold leading-tight">资产拦截</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            全局资产黑名单：命中的域名 / IP / URL / 网段将被拦截，不对其执行任何操作
-          </p>
-        </div>
-      </div>
+      <SecurityHubNav />
 
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">

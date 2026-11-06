@@ -206,7 +206,7 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`, taskIDStr)
 	actRows, err := d.Query(`
 SELECT id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(summary,''),
        metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-       LENGTH(COALESCE(detail,'')) AS detail_len
+       COALESCE(detail_chars, char_length(COALESCE(detail,''))) AS detail_len
 FROM activity
 WHERE exploration_id = $1
 ORDER BY id ASC`, expID)
@@ -499,46 +499,51 @@ FROM llm_usage
 WHERE ts >= $1
 GROUP BY worker, model
 ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`, cutoff)
-	if err == nil {
-		defer usageRows.Close()
-		for usageRows.Next() {
-			var w, m string
-			var calls int
-			var inTok, outTok, cRead, cWrite, lat int64
-			if scanErr := usageRows.Scan(&w, &m, &calls, &inTok, &outTok, &cRead, &cWrite, &lat); scanErr == nil {
-				totalCalls += calls
-				totalInputTokens += inTok
-				totalOutputTokens += outTok
-				totalCacheRead += cRead
-				totalCacheWrite += cWrite
-				totalLLMLatency += lat
-
-				fleetKey := w + "|" + m
-				role := w
-				switch w {
-				case "planner":
-					role = "任务规划器 (Planner)"
-				case "worker":
-					role = "意图执行者 (Worker)"
-				case "mainagent":
-					role = "主对话 Agent (Main)"
-				case "goals":
-					role = "目标引导 (Goals)"
-				}
-				fleetMap[fleetKey] = &FleetAgent{
-					Worker:           w,
-					Role:             role,
-					Model:            m,
-					Calls:            calls,
-					InputTokens:      inTok,
-					OutputTokens:     outTok,
-					CacheReadTokens:  cRead,
-					CacheWriteTokens: cWrite,
-					DurationMs:       lat,
-					Status:           "completed",
-				}
-			}
+	if err != nil {
+		return nil, fmt.Errorf("query llm usage: %w", err)
+	}
+	defer usageRows.Close()
+	for usageRows.Next() {
+		var w, m string
+		var calls int
+		var inTok, outTok, cRead, cWrite, lat int64
+		if err := usageRows.Scan(&w, &m, &calls, &inTok, &outTok, &cRead, &cWrite, &lat); err != nil {
+			return nil, err
 		}
+		totalCalls += calls
+		totalInputTokens += inTok
+		totalOutputTokens += outTok
+		totalCacheRead += cRead
+		totalCacheWrite += cWrite
+		totalLLMLatency += lat
+
+		fleetKey := w + "|" + m
+		role := w
+		switch w {
+		case "planner":
+			role = "任务规划器 (Planner)"
+		case "worker":
+			role = "意图执行者 (Worker)"
+		case "mainagent":
+			role = "主对话 Agent (Main)"
+		case "goals":
+			role = "目标引导 (Goals)"
+		}
+		fleetMap[fleetKey] = &FleetAgent{
+			Worker:           w,
+			Role:             role,
+			Model:            m,
+			Calls:            calls,
+			InputTokens:      inTok,
+			OutputTokens:     outTok,
+			CacheReadTokens:  cRead,
+			CacheWriteTokens: cWrite,
+			DurationMs:       lat,
+			Status:           "completed",
+		}
+	}
+	if err := usageRows.Err(); err != nil {
+		return nil, err
 	}
 
 	report.Summary.LLMCalls = totalCalls
@@ -552,131 +557,55 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`, cutoff)
 		report.Summary.CacheHitRate = float64(totalCacheRead) / float64(totalInputTokens+totalCacheRead)
 	}
 
-	actRows, err := d.Query(`
-SELECT id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(summary,''),
-       metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-       LENGTH(COALESCE(detail,'')) AS detail_len
-FROM activity
-WHERE created_at >= $1
-ORDER BY id DESC
-LIMIT 5000`, cutoff)
-	if err == nil {
-		defer actRows.Close()
-		var totalToolDuration int64
-		var totalThinkingDuration int64
-		var toolCallsCount int
+	activityStats, err := d.globalActivityStats(cutoff)
+	if err != nil {
+		return nil, err
+	}
+	report.Summary.StepCount = activityStats.stepCount
+	report.Summary.ToolCalls = activityStats.toolCalls
+	report.Summary.ThinkingDurationMs = activityStats.thinkingMs
+	report.Summary.ToolDurationMs = activityStats.toolMs
+	report.Summary.TotalDurationMs = totalLLMLatency + activityStats.toolMs
+	if report.Summary.OutputTokens > 0 && (totalLLMLatency-activityStats.thinkingMs) > 0 {
+		genSec := float64(totalLLMLatency-activityStats.thinkingMs) / 1000.0
+		report.Summary.AvgTokensPerSec = float64(report.Summary.OutputTokens) / genSec
+	}
+	report.Composition.TopToolOutputs = activityStats.top
 
-		var charToolOutputs int64
-		var charThinking int64
-		var charReplies int64
-		var charToolUse int64
-		var charDirectives int64
+	activityChars := activityStats.charToolOutputs + activityStats.charThinking + activityStats.charReplies + activityStats.charToolUse + activityStats.charDirectives
+	var estSystemPromptChars int64
+	if activityChars > 0 {
+		estSystemPromptChars = 8000
+	}
+	totalChars := activityChars + estSystemPromptChars
 
-		var topOutputs []TopToolOutput
-		stepCount := 0
-
-		for actRows.Next() {
-			var id int64
-			var nodeID sql.NullInt64
-			var worker, kind, tool, summary string
-			var metaRaw json.RawMessage
-			var createdAt time.Time
-			var inTok, outTok, cRead, cWrite sql.NullInt64
-			var detailLen int64
-
-			if err := actRows.Scan(&id, &nodeID, &worker, &kind, &tool, &summary, &metaRaw, &createdAt,
-				&inTok, &outTok, &cRead, &cWrite, &detailLen); err != nil {
-				continue
-			}
-			stepCount++
-
-			var meta activityMetaPayload
-			if len(metaRaw) > 0 {
-				_ = json.Unmarshal(metaRaw, &meta)
-			}
-
-			dur := meta.DurationMs
-			if dur == 0 && meta.TotalMs > 0 {
-				dur = meta.TotalMs
-			}
-
-			switch kind {
-			case "tool_result":
-				totalToolDuration += dur
-				charToolOutputs += detailLen
-				topOutputs = append(topOutputs, TopToolOutput{
-					Tool:            tool,
-					Summary:         summary,
-					CharCount:       detailLen,
-					EstimatedTokens: (detailLen + 3) / 4,
-					DurationMs:      dur,
-				})
-			case "tool_use":
-				toolCallsCount++
-				charToolUse += detailLen
-			case "thinking":
-				totalThinkingDuration += dur
-				charThinking += detailLen
-			case "text", "result":
-				charReplies += detailLen
-			case "intent", "directive":
-				charDirectives += detailLen
-			}
+	addCat := func(name, cat string, chars int64, color string) {
+		var pct float64
+		if totalChars > 0 {
+			pct = float64(chars) / float64(totalChars) * 100.0
 		}
-
-		report.Summary.StepCount = stepCount
-		report.Summary.ToolCalls = toolCallsCount
-		report.Summary.ThinkingDurationMs = totalThinkingDuration
-		report.Summary.ToolDurationMs = totalToolDuration
-		report.Summary.TotalDurationMs = totalLLMLatency + totalToolDuration
-		if report.Summary.OutputTokens > 0 && (totalLLMLatency-totalThinkingDuration) > 0 {
-			genSec := float64(totalLLMLatency-totalThinkingDuration) / 1000.0
-			report.Summary.AvgTokensPerSec = float64(report.Summary.OutputTokens) / genSec
-		}
-
-		sort.Slice(topOutputs, func(i, j int) bool {
-			return topOutputs[i].CharCount > topOutputs[j].CharCount
-		})
-		if len(topOutputs) > 10 {
-			topOutputs = topOutputs[:10]
-		}
-		report.Composition.TopToolOutputs = topOutputs
-
-		activityChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives
-		var estSystemPromptChars int64
-		if activityChars > 0 {
-			estSystemPromptChars = 8000
-		}
-		totalChars := activityChars + estSystemPromptChars
-
-		addCat := func(name, cat string, chars int64, color string) {
-			var pct float64
-			if totalChars > 0 {
-				pct = float64(chars) / float64(totalChars) * 100.0
-			}
-			report.Composition.Categories = append(report.Composition.Categories, ContextCategory{
-				Name:       name,
-				Category:   cat,
-				Chars:      chars,
-				Tokens:     (chars + 3) / 4,
-				Percentage: pct,
-				Color:      color,
-			})
-		}
-
-		addCat("工具返回 (Tool Outputs)", "tool_output", charToolOutputs, "#f59e0b")
-		addCat("历史对话 (History)", "history", charReplies, "#3b82f6")
-		addCat("思考过程 (Thinking)", "thinking", charThinking, "#8b5cf6")
-		addCat("工具指令 (Tool Calls)", "tool_use", charToolUse, "#06b6d4")
-		addCat("系统提示 (System Prompt)", "system", estSystemPromptChars, "#64748b")
-		if charDirectives > 0 {
-			addCat("任务指令 (Directives)", "user", charDirectives, "#10b981")
-		}
-
-		sort.Slice(report.Composition.Categories, func(i, j int) bool {
-			return report.Composition.Categories[i].Chars > report.Composition.Categories[j].Chars
+		report.Composition.Categories = append(report.Composition.Categories, ContextCategory{
+			Name:       name,
+			Category:   cat,
+			Chars:      chars,
+			Tokens:     (chars + 3) / 4,
+			Percentage: pct,
+			Color:      color,
 		})
 	}
+
+	addCat("工具返回 (Tool Outputs)", "tool_output", activityStats.charToolOutputs, "#f59e0b")
+	addCat("历史对话 (History)", "history", activityStats.charReplies, "#3b82f6")
+	addCat("思考过程 (Thinking)", "thinking", activityStats.charThinking, "#8b5cf6")
+	addCat("工具指令 (Tool Calls)", "tool_use", activityStats.charToolUse, "#06b6d4")
+	addCat("系统提示 (System Prompt)", "system", estSystemPromptChars, "#64748b")
+	if activityStats.charDirectives > 0 {
+		addCat("任务指令 (Directives)", "user", activityStats.charDirectives, "#10b981")
+	}
+
+	sort.Slice(report.Composition.Categories, func(i, j int) bool {
+		return report.Composition.Categories[i].Chars > report.Composition.Categories[j].Chars
+	})
 
 	for _, f := range fleetMap {
 		report.Fleet = append(report.Fleet, *f)
@@ -686,4 +615,103 @@ LIMIT 5000`, cutoff)
 	})
 
 	return report, nil
+}
+
+// activityCharsExpr reads the stored character count and falls back to measuring
+// detail only for rows written before that column existed.
+const activityCharsExpr = `COALESCE(detail_chars, char_length(COALESCE(detail,'')))`
+
+// activityDurationExpr reads step duration from metadata without loading detail.
+const activityDurationExpr = `CASE
+	WHEN COALESCE(metadata->>'duration_ms','') ~ '^[0-9]+$' AND (metadata->>'duration_ms')::bigint > 0
+		THEN (metadata->>'duration_ms')::bigint
+	WHEN COALESCE(metadata->>'total_ms','') ~ '^[0-9]+$'
+		THEN (metadata->>'total_ms')::bigint
+	ELSE 0
+END`
+
+type globalActivityStats struct {
+	stepCount       int
+	toolCalls       int
+	thinkingMs      int64
+	toolMs          int64
+	charToolOutputs int64
+	charThinking    int64
+	charReplies     int64
+	charToolUse     int64
+	charDirectives  int64
+	top             []TopToolOutput
+}
+
+// globalActivityStats aggregates context composition in SQL. It never selects
+// activity.detail, so a dashboard poll does not detoast tool-output bodies.
+func (d *DB) globalActivityStats(cutoff time.Time) (*globalActivityStats, error) {
+	stats := &globalActivityStats{top: []TopToolOutput{}}
+	rows, err := d.Query(`
+SELECT COALESCE(kind,''), COUNT(*),
+       COALESCE(SUM(`+activityCharsExpr+`), 0),
+       COALESCE(SUM(`+activityDurationExpr+`), 0)
+FROM activity
+WHERE created_at >= $1
+GROUP BY kind`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("query activity composition: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var n int
+		var chars, dur int64
+		if err := rows.Scan(&kind, &n, &chars, &dur); err != nil {
+			return nil, err
+		}
+		stats.stepCount += n
+		switch kind {
+		case "tool_result":
+			stats.toolMs += dur
+			stats.charToolOutputs += chars
+		case "tool_use":
+			stats.toolCalls += n
+			stats.charToolUse += chars
+		case "thinking":
+			stats.thinkingMs += dur
+			stats.charThinking += chars
+		case "text", "result":
+			stats.charReplies += chars
+		case "intent", "directive":
+			stats.charDirectives += chars
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	topRows, err := d.Query(`
+SELECT COALESCE(tool,''), COALESCE(summary,''), `+activityCharsExpr+`, `+activityDurationExpr+`
+FROM activity
+WHERE created_at >= $1 AND kind = 'tool_result'
+ORDER BY detail_chars DESC NULLS LAST, id DESC
+LIMIT 10`, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("query top tool outputs: %w", err)
+	}
+	defer topRows.Close()
+	for topRows.Next() {
+		var tool, summary string
+		var chars, dur int64
+		if err := topRows.Scan(&tool, &summary, &chars, &dur); err != nil {
+			return nil, err
+		}
+		stats.top = append(stats.top, TopToolOutput{
+			Tool:            tool,
+			Summary:         summary,
+			CharCount:       chars,
+			EstimatedTokens: (chars + 3) / 4,
+			DurationMs:      dur,
+		})
+	}
+	if err := topRows.Err(); err != nil {
+		return nil, err
+	}
+	return stats, nil
 }

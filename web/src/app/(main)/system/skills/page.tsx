@@ -33,6 +33,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { AgentHubNav } from "@/components/agent-hub-nav";
 import {
   Sheet,
   SheetContent,
@@ -702,36 +703,35 @@ export default function SkillsPage() {
 
   return (
     <div data-content-padding="false" className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-3 border-b px-4 py-2.5 lg:px-6">
-        <div className="flex flex-col gap-0.5">
-          <h1 className="text-sm font-semibold leading-tight">Skill</h1>
-          <p className="text-muted-foreground text-xs">技能库 · agentskills.io 规范 · 按 Agent 授权可见</p>
-        </div>
-        {/* 缺口清单：agent 点名调用、但库里没有的 skill —— 直接是该补什么的依据。 */}
-        {missing.length > 0 && (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm" variant="outline" className="ml-auto">
-                <AlertTriangleIcon className="size-3.5 text-amber-500" />
-                {missing.length} 个未命中调用
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-80">
-              <p className="mb-2 text-xs text-muted-foreground">
-                Agent 点名调用、但技能库里不存在的 skill。按被点名次数排序。
-              </p>
-              <div className="space-y-1">
-                {missing.map((m) => (
-                  <div key={m.skill} className="flex items-center gap-2 text-sm">
-                    <code className="min-w-0 flex-1 truncate font-mono text-xs" title={m.skill}>{m.skill}</code>
-                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{m.calls} 次</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{fmtTime(m.last_used)}</span>
+      <div className="px-4 pt-3 lg:px-6">
+        <AgentHubNav
+          action={
+            missing.length > 0 ? (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button size="sm" variant="outline">
+                    <AlertTriangleIcon className="size-3.5 text-amber-500" />
+                    {missing.length} 个未命中调用
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-80">
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    Agent 点名调用、但技能库里不存在的 skill。按被点名次数排序。
+                  </p>
+                  <div className="space-y-1">
+                    {missing.map((m) => (
+                      <div key={m.skill} className="flex items-center gap-2 text-sm">
+                        <code className="min-w-0 flex-1 truncate font-mono text-xs" title={m.skill}>{m.skill}</code>
+                        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{m.calls} 次</span>
+                        <span className="shrink-0 text-xs text-muted-foreground">{fmtTime(m.last_used)}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
+                </PopoverContent>
+              </Popover>
+            ) : undefined
+          }
+        />
       </div>
       <div className="flex flex-1 overflow-hidden">
         {/* ── 左侧文件树 ── */}
