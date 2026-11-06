@@ -447,8 +447,8 @@ func (s *ExplorationStore) AddFindingFollowUpIntent(findingID, findingNodeID int
 		metadata = json.RawMessage(`{}`)
 	}
 	if err := tx.QueryRow(`
-INSERT INTO activity(exploration_id, node_id, worker, kind, tool, tool_use_id, is_error, summary, detail, metadata, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
-VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,NULLIF($8,''),NULLIF($9,''),$10,$11,$12,$13,$14)
+INSERT INTO activity(exploration_id, node_id, worker, kind, tool, tool_use_id, is_error, summary, detail, detail_chars, metadata, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),NULLIF($6,''),$7,NULLIF($8,''),NULLIF($9,''),char_length(COALESCE($9,'')),$10,$11,$12,$13,$14)
 RETURNING id, created_at`, s.expID, audit.NodeID, utf8Clean(audit.Worker), utf8Clean(audit.Kind), utf8Clean(audit.Tool), utf8Clean(audit.ToolUseID), audit.IsError,
 		utf8Clean(audit.Summary), utf8Clean(audit.Detail), metadata, audit.InputTokens, audit.OutputTokens, audit.CacheReadTokens, audit.CacheWriteTokens).
 		Scan(&audit.ID, &audit.CreatedAt); err != nil {

@@ -340,6 +340,13 @@ CREATE INDEX IF NOT EXISTS idx_act_result_usage ON activity(exploration_id)
     INCLUDE (input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
     WHERE kind='result';
 CREATE INDEX IF NOT EXISTS idx_act_latest ON activity(exploration_id, created_at DESC);
+-- detail_chars is the character length of detail, stored so aggregates never
+-- detoast the tool-output body. The partial index makes the one-time backfill
+-- (and every later startup) find remaining nulls without a full table scan.
+ALTER TABLE activity ADD COLUMN IF NOT EXISTS detail_chars INTEGER;
+CREATE INDEX IF NOT EXISTS idx_act_detail_chars_null ON activity(id) WHERE detail_chars IS NULL;
+UPDATE activity SET detail_chars = char_length(COALESCE(detail, '')) WHERE detail_chars IS NULL;
+CREATE INDEX IF NOT EXISTS idx_act_created ON activity(created_at DESC);
 
 -- main_sessions records the resettable main-agent conversation segments of a task.
 -- Segment 0 (the original session) is implicit and never stored; this table holds
