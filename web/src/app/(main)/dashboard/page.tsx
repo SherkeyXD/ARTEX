@@ -28,7 +28,6 @@ import {
   Cell,
   Pie,
   PieChart,
-  ResponsiveContainer,
   Tooltip as RechartsTooltip,
   XAxis,
   YAxis,
@@ -709,37 +708,36 @@ export default function DashboardPage() {
 
               <div className="flex items-center gap-4">
                 <div className="h-[120px] w-[120px] shrink-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={
-                          (contextMetrics?.composition.categories.length ?? 0) > 0 &&
-                          contextMetrics!.composition.categories.some((c) => c.tokens > 0)
-                            ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
-                            : [{ name: "暂无数据", tokens: 1, color: "hsl(var(--muted))" }]
-                        }
-                        dataKey="tokens"
-                        nameKey="name"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={30}
-                        outerRadius={50}
-                        paddingAngle={2}
-                      >
-                        {(
-                          (contextMetrics?.composition.categories.length ?? 0) > 0 &&
-                          contextMetrics!.composition.categories.some((c) => c.tokens > 0)
-                            ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
-                            : [{ color: "hsl(var(--muted))" }]
-                        ).map((cat, idx) => (
-                          <Cell key={`cell-${idx}`} fill={cat.color || "#8884d8"} />
-                        ))}
-                      </Pie>
-                      <RechartsTooltip
-                        formatter={(v: any, name: any) => [`${fmtTokens(Number(v))} Tokens`, name]}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
+                  <PieChart width={120} height={120}>
+                    <Pie
+                      data={
+                        (contextMetrics?.composition.categories.length ?? 0) > 0 &&
+                        contextMetrics!.composition.categories.some((c) => c.tokens > 0)
+                          ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
+                          : [{ name: "暂无数据", tokens: 1, color: "hsl(var(--muted))" }]
+                      }
+                      dataKey="tokens"
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={30}
+                      outerRadius={50}
+                      paddingAngle={2}
+                      isAnimationActive={false}
+                    >
+                      {(
+                        (contextMetrics?.composition.categories.length ?? 0) > 0 &&
+                        contextMetrics!.composition.categories.some((c) => c.tokens > 0)
+                          ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
+                          : [{ color: "hsl(var(--muted))" }]
+                      ).map((cat, idx) => (
+                        <Cell key={`cell-${idx}`} fill={cat.color || "#8884d8"} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip
+                      formatter={(v: any, name: any) => [`${fmtTokens(Number(v))} Tokens`, name]}
+                    />
+                  </PieChart>
                 </div>
 
                 <div className="flex-1 space-y-1.5">
@@ -895,9 +893,9 @@ export default function DashboardPage() {
                         />
                       }
                     />
-                    <Bar dataKey="input" stackId="1" fill="var(--color-input)" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="output" stackId="1" fill="var(--color-output)" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="cacheRead" stackId="1" fill="var(--color-cacheRead)" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="input" stackId="1" fill="var(--color-input)" radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey="output" stackId="1" fill="var(--color-output)" radius={[0, 0, 0, 0]} isAnimationActive={false} />
+                    <Bar dataKey="cacheRead" stackId="1" fill="var(--color-cacheRead)" radius={[3, 3, 0, 0]} isAnimationActive={false} />
                   </BarChart>
                 </ChartContainer>
               )}
