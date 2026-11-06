@@ -102,6 +102,12 @@ type TaskContextMetricsReport struct {
 	Fleet       []FleetAgent       `json:"fleet"`
 }
 
+type GlobalContextMetricsReport struct {
+	Summary     ContextSummary     `json:"summary"`
+	Composition ContextComposition `json:"composition"`
+	Fleet       []FleetAgent       `json:"fleet"`
+}
+
 type activityMetaPayload struct {
 	DurationMs int64 `json:"duration_ms"`
 	TotalMs    int64 `json:"total_ms"`
@@ -446,6 +452,227 @@ ORDER BY id ASC`, expID)
 	})
 
 	// Flatten fleet agents into slice
+	for _, f := range fleetMap {
+		report.Fleet = append(report.Fleet, *f)
+	}
+	sort.Slice(report.Fleet, func(i, j int) bool {
+		return report.Fleet[i].InputTokens+report.Fleet[i].OutputTokens > report.Fleet[j].InputTokens+report.Fleet[j].OutputTokens
+	})
+
+	return report, nil
+}
+
+// GlobalContextMetrics computes system-wide context composition, step latencies,
+// token accounting, and agent fleet performance.
+func (d *DB) GlobalContextMetrics(days int) (*GlobalContextMetricsReport, error) {
+	if days <= 0 {
+		days = 30
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+
+	report := &GlobalContextMetricsReport{
+		Composition: ContextComposition{
+			Categories:     []ContextCategory{},
+			TopToolOutputs: []TopToolOutput{},
+		},
+		Fleet: []FleetAgent{},
+	}
+
+	fleetMap := make(map[string]*FleetAgent)
+	var totalLLMLatency int64
+	var totalInputTokens, totalOutputTokens, totalCacheRead, totalCacheWrite int64
+	var totalCalls int
+
+	usageRows, err := d.Query(`
+SELECT COALESCE(NULLIF(worker,''),'(unknown)') AS worker,
+       COALESCE(NULLIF(model,''),'(unknown)') AS model,
+       COUNT(*),
+       COALESCE(SUM(input_tokens), 0),
+       COALESCE(SUM(output_tokens), 0),
+       COALESCE(SUM(cache_read), 0),
+       COALESCE(SUM(cache_write), 0),
+       COALESCE(SUM(latency_ms), 0)
+FROM llm_usage
+WHERE ts >= $1
+GROUP BY worker, model
+ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`, cutoff)
+	if err == nil {
+		defer usageRows.Close()
+		for usageRows.Next() {
+			var w, m string
+			var calls int
+			var inTok, outTok, cRead, cWrite, lat int64
+			if scanErr := usageRows.Scan(&w, &m, &calls, &inTok, &outTok, &cRead, &cWrite, &lat); scanErr == nil {
+				totalCalls += calls
+				totalInputTokens += inTok
+				totalOutputTokens += outTok
+				totalCacheRead += cRead
+				totalCacheWrite += cWrite
+				totalLLMLatency += lat
+
+				fleetKey := w + "|" + m
+				role := w
+				switch w {
+				case "planner":
+					role = "任务规划器 (Planner)"
+				case "worker":
+					role = "意图执行者 (Worker)"
+				case "mainagent":
+					role = "主对话 Agent (Main)"
+				case "goals":
+					role = "目标引导 (Goals)"
+				}
+				fleetMap[fleetKey] = &FleetAgent{
+					Worker:           w,
+					Role:             role,
+					Model:            m,
+					Calls:            calls,
+					InputTokens:      inTok,
+					OutputTokens:     outTok,
+					CacheReadTokens:  cRead,
+					CacheWriteTokens: cWrite,
+					DurationMs:       lat,
+					Status:           "completed",
+				}
+			}
+		}
+	}
+
+	report.Summary.LLMCalls = totalCalls
+	report.Summary.InputTokens = totalInputTokens
+	report.Summary.OutputTokens = totalOutputTokens
+	report.Summary.CacheReadTokens = totalCacheRead
+	report.Summary.CacheWriteTokens = totalCacheWrite
+	report.Summary.TotalTokens = totalInputTokens + totalOutputTokens
+	report.Summary.LLMDurationMs = totalLLMLatency
+	if totalInputTokens+totalCacheRead > 0 {
+		report.Summary.CacheHitRate = float64(totalCacheRead) / float64(totalInputTokens+totalCacheRead)
+	}
+
+	actRows, err := d.Query(`
+SELECT id, node_id, COALESCE(worker,''), COALESCE(kind,''), COALESCE(tool,''), COALESCE(summary,''),
+       metadata, created_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+       LENGTH(COALESCE(detail,'')) AS detail_len
+FROM activity
+WHERE created_at >= $1
+ORDER BY id DESC
+LIMIT 5000`, cutoff)
+	if err == nil {
+		defer actRows.Close()
+		var totalToolDuration int64
+		var totalThinkingDuration int64
+		var toolCallsCount int
+
+		var charToolOutputs int64
+		var charThinking int64
+		var charReplies int64
+		var charToolUse int64
+		var charDirectives int64
+
+		var topOutputs []TopToolOutput
+		stepCount := 0
+
+		for actRows.Next() {
+			var id int64
+			var nodeID sql.NullInt64
+			var worker, kind, tool, summary string
+			var metaRaw json.RawMessage
+			var createdAt time.Time
+			var inTok, outTok, cRead, cWrite sql.NullInt64
+			var detailLen int64
+
+			if err := actRows.Scan(&id, &nodeID, &worker, &kind, &tool, &summary, &metaRaw, &createdAt,
+				&inTok, &outTok, &cRead, &cWrite, &detailLen); err != nil {
+				continue
+			}
+			stepCount++
+
+			var meta activityMetaPayload
+			if len(metaRaw) > 0 {
+				_ = json.Unmarshal(metaRaw, &meta)
+			}
+
+			dur := meta.DurationMs
+			if dur == 0 && meta.TotalMs > 0 {
+				dur = meta.TotalMs
+			}
+
+			switch kind {
+			case "tool_result":
+				totalToolDuration += dur
+				charToolOutputs += detailLen
+				topOutputs = append(topOutputs, TopToolOutput{
+					Tool:            tool,
+					Summary:         summary,
+					CharCount:       detailLen,
+					EstimatedTokens: (detailLen + 3) / 4,
+					DurationMs:      dur,
+				})
+			case "tool_use":
+				toolCallsCount++
+				charToolUse += detailLen
+			case "thinking":
+				totalThinkingDuration += dur
+				charThinking += detailLen
+			case "text", "result":
+				charReplies += detailLen
+			case "intent", "directive":
+				charDirectives += detailLen
+			}
+		}
+
+		report.Summary.StepCount = stepCount
+		report.Summary.ToolCalls = toolCallsCount
+		report.Summary.ThinkingDurationMs = totalThinkingDuration
+		report.Summary.ToolDurationMs = totalToolDuration
+		report.Summary.TotalDurationMs = totalLLMLatency + totalToolDuration
+		if report.Summary.OutputTokens > 0 && (totalLLMLatency-totalThinkingDuration) > 0 {
+			genSec := float64(totalLLMLatency-totalThinkingDuration) / 1000.0
+			report.Summary.AvgTokensPerSec = float64(report.Summary.OutputTokens) / genSec
+		}
+
+		sort.Slice(topOutputs, func(i, j int) bool {
+			return topOutputs[i].CharCount > topOutputs[j].CharCount
+		})
+		if len(topOutputs) > 10 {
+			topOutputs = topOutputs[:10]
+		}
+		report.Composition.TopToolOutputs = topOutputs
+
+		const estSystemPromptChars = int64(8000)
+		totalChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives
+		if totalChars > 0 {
+			totalChars += estSystemPromptChars
+		} else {
+			totalChars = 1
+		}
+
+		addCat := func(name, cat string, chars int64, color string) {
+			pct := float64(chars) / float64(totalChars) * 100.0
+			report.Composition.Categories = append(report.Composition.Categories, ContextCategory{
+				Name:       name,
+				Category:   cat,
+				Chars:      chars,
+				Tokens:     (chars + 3) / 4,
+				Percentage: pct,
+				Color:      color,
+			})
+		}
+
+		addCat("工具返回 (Tool Outputs)", "tool_output", charToolOutputs, "#f59e0b")
+		addCat("历史对话 (History)", "history", charReplies, "#3b82f6")
+		addCat("思考过程 (Thinking)", "thinking", charThinking, "#8b5cf6")
+		addCat("工具指令 (Tool Calls)", "tool_use", charToolUse, "#06b6d4")
+		addCat("系统提示 (System Prompt)", "system", estSystemPromptChars, "#64748b")
+		if charDirectives > 0 {
+			addCat("任务指令 (Directives)", "user", charDirectives, "#10b981")
+		}
+
+		sort.Slice(report.Composition.Categories, func(i, j int) bool {
+			return report.Composition.Categories[i].Chars > report.Composition.Categories[j].Chars
+		})
+	}
+
 	for _, f := range fleetMap {
 		report.Fleet = append(report.Fleet, *f)
 	}

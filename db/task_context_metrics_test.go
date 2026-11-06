@@ -105,4 +105,15 @@ func TestTaskContextMetrics(t *testing.T) {
 	if len(report.Turns) != 1 {
 		t.Errorf("expected 1 evolution turn, got %d", len(report.Turns))
 	}
+
+	globalReport, err := d.GlobalContextMetrics(30)
+	if err != nil {
+		t.Fatalf("GlobalContextMetrics failed: %v", err)
+	}
+	if globalReport.Summary.TotalTokens < 1200 {
+		t.Errorf("expected global total tokens >= 1200, got %d", globalReport.Summary.TotalTokens)
+	}
+	if len(globalReport.Composition.TopToolOutputs) < 1 {
+		t.Errorf("expected at least 1 top tool output in global report, got %d", len(globalReport.Composition.TopToolOutputs))
+	}
 }
