@@ -3161,14 +3161,6 @@ export const skills: SkillItem[] = [
     usage_agents: ["worker"],
     last_used: "2026-08-19T21:40:00Z",
   },
-  {
-    name: "scopesentry",
-    description: "从 ScopeSentry 拉取资产并归并到公司范围；批量导入资产时使用。",
-    files: ["SKILL.md", "assets/mapping.md"],
-    calls: 0,
-    tasks: 0,
-    usage_agents: [],
-  },
 ];
 
 export const skillCalls: SkillCall[] = [
@@ -3320,7 +3312,7 @@ export const interceptRules: InterceptRule[] = [
   },
   {
     id: 2,
-    name: "外发流量直接拒绝",
+    name: "外发请求直接拒绝",
     enabled: true,
     priority: 20,
     match_target: "tool_input",
@@ -3388,12 +3380,12 @@ export const interceptHistory: InterceptApprovalRow[] = [
     tool_name: "bash",
     tool_input: { command: "impacket-secretsdump acme.local/svc_deploy@10.10.10.10 -just-dc" },
     status: "allowed",
-    reason: "外发流量直接拒绝",
+    reason: "外发请求直接拒绝",
     created_at: T("2026-07-26T00:05:00Z"),
     decided_at: T("2026-07-26T00:06:00Z"),
     conv_title: "",
     conv_agent_key: "",
-    rule_name: "外发流量直接拒绝",
+    rule_name: "外发请求直接拒绝",
   },
   {
     id: 93,

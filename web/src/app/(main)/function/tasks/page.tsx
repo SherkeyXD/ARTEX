@@ -610,7 +610,7 @@ export default function TasksPage() {
     [load],
   );
 
-  // deleteTasks 逐个删除所选任务:后端没有批量接口,且单次删除会连带清理资产/流量/文件,
+  // deleteTasks 逐个删除所选任务:后端没有批量接口,且单次删除会连带清理资产/文件,
   // 串行执行以免一次性打爆后端;成功的从选中集移除,失败的保留以便重试。
   const deleteTasks = React.useCallback(
     async (ids: string[], options: DeleteTaskOptions, onProgress: (done: number) => void) => {
@@ -1486,7 +1486,7 @@ function ArchiveConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{count === 1 ? "归档任务" : `归档 ${count} 个任务`}</AlertDialogTitle>
           <AlertDialogDescription className="[overflow-wrap:anywhere]">
-            归档会停止任务调度，将图谱、LLM 历史、文件以及独占资产和流量压缩到本地冷存储。归档完成后可从“已归档”中还原。
+            归档会停止任务调度，将图谱、LLM 历史、文件以及独占资产压缩到本地冷存储。归档完成后可从“已归档”中还原。
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -3263,7 +3263,7 @@ function CreateTaskSheet({
               />
               <FieldDescription>
                 最多关联 {MAX_SOURCE_TASKS}{" "}
-                个任务。实时只读继承所选任务的持久化黑板、资产范围及相关流量；新任务写入独立黑板。
+                个任务。实时只读继承所选任务的持久化黑板与资产范围；新任务写入独立黑板。
               </FieldDescription>
             </Field>
             <Field>

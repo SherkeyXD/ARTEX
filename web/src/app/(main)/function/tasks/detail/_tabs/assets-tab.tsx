@@ -711,7 +711,7 @@ export function AssetsTab({ taskId }: { taskId: string }) {
             <AlertDialogTitle>移出当前任务？</AlertDialogTitle>
             <AlertDialogDescription className="[overflow-wrap:anywhere]">
               {removeTarget ? `将“${assetLabel(removeTarget)}”从当前任务的测试资产中移出。` : ""}
-              全局资产、关联流量和历史黑板锚点会继续保留。
+              全局资产和历史黑板锚点会继续保留。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

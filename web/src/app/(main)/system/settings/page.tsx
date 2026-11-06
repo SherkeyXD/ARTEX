@@ -228,15 +228,10 @@ export default function SystemSettingsPage() {
               全局代理
             </CardTitle>
             <CardDescription>
-              所有 Agent 的<b>目标流量</b>经此代理出网（隐藏源 IP / 走跳板）。支持 <b>http / https / socks5</b>，可带{" "}
+              所有 Agent 的<b>网络请求</b>经此代理出网（隐藏源 IP / 走跳板）。支持 <b>http / https / socks5</b>，可带{" "}
               <code>user:pass</code> 认证。留空=直连。
               <br />
-              开启<b>流量捕获</b>时，它作为记录代理的<b>上游</b>（流量仍全量落库，再经此代理出网）；关闭捕获时，直接注入
-              Agent 的 bash / WebFetch 出网。与网络搜索代理、LLM 代理相互独立。
-              <br />
-              <b>提示</b>：socks5 在<b>关闭捕获</b>时依赖各命令行工具对 <code>ALL_PROXY</code> 的支持（curl
-              可用，部分工具可能忽略）； 若主要用 socks5，建议开启流量捕获——此路径由 MITM
-              亲自拨号，工具无感知、稳定生效。
+              配置后将直接注入到各 Agent 的执行环境及网络工具（bash、WebFetch 等）出网。与网络搜索代理、LLM 代理相互独立。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2">
@@ -257,7 +252,7 @@ export default function SystemSettingsPage() {
               </Button>
             </div>
             <p className="text-muted-foreground text-xs">
-              {globalProxyInput.trim() ? "已配置 · 所有目标流量经此代理出网" : "未配置 · 目标流量直连出网"}
+              {globalProxyInput.trim() ? "已配置 · 所有目标请求经此代理出网" : "未配置 · 目标请求直连出网"}
             </p>
           </CardContent>
         </Card>
@@ -310,8 +305,7 @@ export default function SystemSettingsPage() {
             </CardTitle>
             <CardDescription>
               这是网络搜索的<b>总开关 + 来源配置</b>。开启后，才能在<b>每个 Agent 的配置</b>里单独选择是否启用
-              <b>web_search</b>（仅返回标题/链接/摘要，不抓取正文；抓取由 WebFetch 负责）。网络搜索<b>不走</b>
-              记录代理，独立于流量捕获。
+              <b>web_search</b>（仅返回标题/链接/摘要，不抓取正文；抓取由 WebFetch 负责）。网络搜索配置独立于全局出口代理与 LLM 代理。
               <br />
               来源可选 <b>DuckDuckGo（ddgs）</b>（无需 Key）、<b>Brave（免费版）</b>（需填写 Brave API Key）、{" "}
               <b>Tavily</b>（需填写 Tavily API Key）或 <b>DeepSeek</b>（复用当前 LLM 配置）。总开关关闭时，各
@@ -368,7 +362,7 @@ export default function SystemSettingsPage() {
                 </p>
                 <p className="text-muted-foreground text-xs leading-relaxed">
                   与其它来源不同，搜索由 <b>DeepSeek 服务端执行</b>：每次搜索会额外消耗一次模型调用（产生 Token
-                  费用），搜索请求<b>不经过上面的出口代理</b>，也<b>不计入流量留痕</b>；返回结果<b>只有标题和链接</b>
+                  费用），搜索请求<b>不经过出口代理</b>；返回结果<b>只有标题和链接</b>
                   （无摘要），需要正文时由 WebFetch 抓取。
                 </p>
                 <p className="text-muted-foreground text-xs leading-relaxed">
@@ -464,7 +458,7 @@ export default function SystemSettingsPage() {
                   </Button>
                 </div>
                 <p className="text-muted-foreground text-xs">
-                  独立出口代理，仅用于访问搜索端点（VPN/SOCKS 等）。与记录流量的 MITM 代理无关；网络不通时经此代理访问。
+                  独立出口代理，仅用于访问搜索端点（VPN/SOCKS 等），与全局出口代理相互独立；网络不通时经此代理访问。
                 </p>
               </div>
             )}

@@ -377,7 +377,7 @@ function TaskDetailInner() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>归档任务 #{task.id}？</AlertDialogTitle>
                   <AlertDialogDescription>
-                    任务图谱、关联记录、独占资产与流量、工作文件和 LLM
+                    任务图谱、关联记录、独占资产、工作文件和 LLM
                     历史将压缩到冷存储。归档完成后可在任务列表的“已归档”页还原。
                   </AlertDialogDescription>
                 </AlertDialogHeader>
