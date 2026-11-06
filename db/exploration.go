@@ -1574,6 +1574,21 @@ LIMIT $1`, limit)
 	return out, rows.Err()
 }
 
+// IntentRevision is a cheap fingerprint of one exploration's intent rows.
+// Callers use it to skip rebuilding the session list when nothing changed.
+func (s *ExplorationStore) IntentRevision() (string, error) {
+	var count, maxID, updatedMs int64
+	err := s.db.QueryRow(`
+SELECT COUNT(*), COALESCE(MAX(id),0),
+       COALESCE((EXTRACT(EPOCH FROM MAX(updated_at))*1000)::bigint, 0)
+FROM exploration_nodes
+WHERE exploration_id=$1 AND kind=$2`, s.expID, KindIntent).Scan(&count, &maxID, &updatedMs)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d.%d.%d", count, maxID, updatedMs), nil
+}
+
 // ActivityListForTerminalIntent is the inherited, incremental-read boundary.
 // The intent state check and activity read happen in one statement so a source
 // intent reopened between API-level checks cannot expose its new in-flight trace.

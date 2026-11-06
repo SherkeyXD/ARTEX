@@ -1398,6 +1398,22 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       reopened_intents: 0,
     };
   }
+  if (seg[0] === "tasks" && seg[2] === "session-live" && seg.length === 3 && m === "GET") {
+    const task = mockTasks.find((item) => item.id === seg[1]);
+    if (!task) throw new Error("任务不存在");
+    return {
+      chat_running: false,
+      tokens: { total: task.tokens ?? D.tokenTotal, sessions: D.tokenSessions },
+      llm: {
+        mainagent: mockRoleResolution(task, "mainagent"),
+        planner: mockRoleResolution(task, "planner"),
+        worker: mockRoleResolution(task, "worker"),
+      },
+      pending_intercepts: mockInterceptHistory
+        .filter((row) => row.task_id === seg[1] && row.status === "pending")
+        .map((row) => ({ agent_name: row.agent_name })),
+    };
+  }
   if (seg[0] === "tasks" && seg[2] === "llm" && seg[3] === "resolution" && m === "GET") {
     const task = mockTasks.find((item) => item.id === seg[1]);
     if (!task) throw new Error("任务不存在");
@@ -2034,7 +2050,11 @@ function route(m: string, path: string, seg: string[], q: URLSearchParams, b: Re
       let list = mockIntents;
       if (before > 0) list = list.filter((intent) => Number(intent.id.replace(/\D/g, "") || intent.id) < before);
       const page = list.slice(0, limit);
-      return { items: page, has_more: list.length > limit };
+      const rev = page.map((intent) => `${intent.id}:${intent.state}`).join(",");
+      if (before === 0 && q.get("rev") && q.get("rev") === rev) {
+        return { unchanged: true, rev, has_more: list.length > limit };
+      }
+      return { items: page, has_more: list.length > limit, rev };
     }
     return mockIntents;
   }

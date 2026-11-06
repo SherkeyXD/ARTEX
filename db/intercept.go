@@ -334,6 +334,32 @@ LIMIT $1`, limit)
 	return total, items, rows.Err()
 }
 
+// PendingInterceptAgents returns agent names of pending approvals for one task.
+func (d *DB) PendingInterceptAgents(taskID string, limit int) ([]string, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := d.Query(`
+SELECT COALESCE(agent_name,'')
+FROM intercept_pending
+WHERE task_id=$1 AND status='pending'
+ORDER BY created_at DESC
+LIMIT $2`, taskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	names := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, rows.Err()
+}
+
 // ListTaskIntercepts returns all intercept_pending rows for a specific task (newest first).
 func (d *DB) ListTaskIntercepts(taskID string) ([]InterceptApprovalRow, error) {
 	rows, err := d.Query(approvalRowSelect+` WHERE ip.task_id=$1 ORDER BY ip.created_at DESC`, taskID)

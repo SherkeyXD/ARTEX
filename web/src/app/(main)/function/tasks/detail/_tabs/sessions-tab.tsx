@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+
 import Link from "next/link";
 
 import {
@@ -62,7 +63,6 @@ import type {
   Activity,
   ChatAttachment,
   IntentAsset,
-  InterceptApprovalRow,
   Session,
   SessionStatus,
   SessionTokenUsage,
@@ -642,7 +642,10 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   const [sessionTokens, setSessionTokens] = React.useState<Record<string, SessionTokenUsage>>({});
   const [llmResolutions, setLLMResolutions] = React.useState<TaskLLMResolutions | null>(null);
   // Pending intercept requests for this task — used to show warning icons on sessions.
-  const [pendingIntercepts, setPendingIntercepts] = React.useState<InterceptApprovalRow[]>([]);
+  const [pendingIntercepts, setPendingIntercepts] = React.useState<{ agent_name: string }[]>([]);
+  const intentRevRef = React.useRef("");
+  const intentAssetSigRef = React.useRef("");
+  const sessionLiveSigRef = React.useRef("");
 
   // Refs backing SSE/loading without re-render churn.
   const snapshotRef = React.useRef(0); // task-level snapshot cursor → SSE since=
@@ -782,45 +785,24 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     [taskId, store, patchStore],
   );
 
-  // ── task token total (whole task, all agents) ───────────────────────────────────
-  useVisibilityPoll(async () => {
-    try {
-      const r = await api.tokenStats(taskId);
-      setTaskTokens(r.total);
-      setSessionTokens(Object.fromEntries(r.sessions.map((item) => [item.session, item])));
-    } catch {
-      // Polling is best-effort; the next interval retries automatically.
-    }
-  }, 5000);
-
+  // Chat state, tokens, LLM resolution, and pending approvals share one poll.
   useVisibilityPoll(async () => {
     const request = ++chatStatusRequestRef.current;
     try {
-      const { running } = await api.chatStatus(taskId);
-      if (chatStatusRequestRef.current === request) setMainChatRunning(running);
+      const live = await api.sessionLive(taskId);
+      if (chatStatusRequestRef.current !== request) return;
+      const sig = JSON.stringify(live);
+      if (sig === sessionLiveSigRef.current) return;
+      sessionLiveSigRef.current = sig;
+      setMainChatRunning(live.chatRunning);
+      setTaskTokens(live.total ?? null);
+      setSessionTokens(Object.fromEntries(live.sessions.map((item) => [item.session, item])));
+      setLLMResolutions(live.llm);
+      setPendingIntercepts(live.pendingIntercepts);
     } catch {
-      // Keep the last authoritative value. Before the first success, recent
-      // activity remains a conservative fallback.
+      // Polling is best-effort; the next interval retries automatically.
     }
   }, 3000);
-
-  useVisibilityPoll(async () => {
-    try {
-      const value = await api.taskLLMResolution(taskId);
-      setLLMResolutions(value);
-    } catch {
-      // Polling is best-effort; the next interval retries automatically.
-    }
-  }, 10_000);
-
-  useVisibilityPoll(async () => {
-    try {
-      const rows = await api.interceptTask(taskId);
-      setPendingIntercepts(rows.filter((r) => r.status === "pending"));
-    } catch {
-      // Polling is best-effort; the next interval retries automatically.
-    }
-  }, 5000);
 
   const [, setTick] = React.useState(0);
 
@@ -841,6 +823,11 @@ export function SessionsTab({ taskId }: { taskId: string }) {
     setTaskTokens(null);
     setSessionTokens({});
     setLLMResolutions(null);
+    setPendingIntercepts([]);
+    setMainChatRunning(null);
+    intentRevRef.current = "";
+    intentAssetSigRef.current = "";
+    sessionLiveSigRef.current = "";
     setSseLive(false);
     setActiveId(MAIN_ID); // a stale worker id from the previous task must not leak in
     setMainSegs([{ seq: 0, created_at: "" }]);
@@ -1005,6 +992,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   useVisibilityPoll(async () => {
     try {
       const assets = await api.taskIntentAssets(taskId);
+      const sig = JSON.stringify(assets);
+      if (sig === intentAssetSigRef.current) return;
+      intentAssetSigRef.current = sig;
       setIntentAssets(assets);
     } catch {
       // The next poll retries; Worker controls and transcripts remain available.
@@ -1014,7 +1004,9 @@ export function SessionsTab({ taskId }: { taskId: string }) {
   // ── worker (intent) session list — paged, poll first page lightly ───────────────
   useVisibilityPoll(async () => {
     try {
-      const r = await api.intentsPage(taskId, 0, 300);
+      const r = await api.intentsPage(taskId, 0, 300, intentRevRef.current);
+      if (r.rev) intentRevRef.current = r.rev;
+      if (r.unchanged) return;
       const freshIds = new Set(r.items.map((item) => item.id));
       const oldestFreshId = r.items.reduce((minimum, item) => Math.min(minimum, Number(item.id)), Infinity);
       const displaced = r.hasMore
