@@ -23,6 +23,7 @@ export function SettingsHubNav({
   action?: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const cleanPath = (pathname ? pathname.replace(/\/+$/, "") : "") || "/";
 
   return (
     <div className="flex flex-col gap-3 pb-1 border-b">
@@ -37,10 +38,8 @@ export function SettingsHubNav({
       <nav className="flex gap-1 overflow-x-auto no-scrollbar pt-1">
         {SETTINGS_HUB_TABS.map((tab) => {
           const Icon = tab.icon;
-          const isActive =
-            tab.href === "/system/settings"
-              ? pathname === "/system/settings"
-              : pathname.startsWith(tab.href);
+          const cleanHref = tab.href.replace(/\/+$/, "") || "/";
+          const isActive = cleanPath === cleanHref;
 
           return (
             <Link

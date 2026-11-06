@@ -25,6 +25,7 @@ export function SecurityHubNav({
   action?: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const cleanPath = (pathname ? pathname.replace(/\/+$/, "") : "") || "/";
   const [pendingCount, setPendingCount] = React.useState(0);
 
   useVisibilityPoll(async () => {
@@ -49,10 +50,8 @@ export function SecurityHubNav({
       <nav className="flex gap-1 overflow-x-auto no-scrollbar pt-1">
         {SECURITY_HUB_TABS.map((tab) => {
           const Icon = tab.icon;
-          const isActive =
-            tab.href === "/system/intercept"
-              ? pathname === "/system/intercept"
-              : pathname.startsWith(tab.href);
+          const cleanHref = tab.href.replace(/\/+$/, "") || "/";
+          const isActive = cleanPath === cleanHref;
 
           return (
             <Link

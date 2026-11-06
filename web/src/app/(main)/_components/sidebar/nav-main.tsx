@@ -88,30 +88,34 @@ function hasSubItems(item: NavMainItem): item is NavMainParentItem {
 export function NavMain({ items }: NavMainProps) {
   const rawPath = usePathname();
   // 路由段含中文，pathname 可能是百分号编码，解码后再与导航 url 比较，保证高亮命中。
+  // 同时去除结尾斜杠，兼容静态导出 trailingSlash。
   const path = (() => {
     try {
-      return decodeURIComponent(rawPath);
+      const decoded = decodeURIComponent(rawPath);
+      return (decoded.replace(/\/+$/, "") || "/");
     } catch {
-      return rawPath;
+      return (rawPath.replace(/\/+$/, "") || "/");
     }
   })();
 
   const isItemActive = (item: NavMainItem) => {
     if (hasSubItems(item)) {
-      return item.subItems.some((sub) => path.startsWith(sub.url));
+      return item.subItems.some((sub) => isSubItemActive(sub.url));
     }
 
-    return path === item.url;
+    const cleanUrl = item.url.replace(/\/+$/, "") || "/";
+    return path === cleanUrl;
   };
 
   const isSubItemActive = (url: string) => {
-    if (path === url) return true;
-    if (url === "/system/agents" && path.startsWith("/system/agents/")) return true;
+    const cleanUrl = url.replace(/\/+$/, "") || "/";
+    if (path === cleanUrl) return true;
+    if (cleanUrl === "/system/agents" && path.startsWith("/system/agents/")) return true;
     return false;
   };
 
   const isSubmenuOpen = (item: NavMainParentItem) => {
-    return item.subItems.some((sub) => path.startsWith(sub.url));
+    return item.subItems.some((sub) => isSubItemActive(sub.url));
   };
 
   return (

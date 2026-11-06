@@ -25,6 +25,7 @@ export function AgentHubNav({
   action?: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const cleanPath = (pathname ? pathname.replace(/\/+$/, "") : "") || "/";
 
   return (
     <div className="flex flex-col gap-3 pb-1 border-b">
@@ -39,10 +40,11 @@ export function AgentHubNav({
       <nav className="flex gap-1 overflow-x-auto no-scrollbar pt-1">
         {AGENT_HUB_TABS.map((tab) => {
           const Icon = tab.icon;
+          const cleanHref = tab.href.replace(/\/+$/, "") || "/";
           const isActive =
-            tab.href === "/system/agents"
-              ? pathname === "/system/agents" || pathname.startsWith("/system/agents/")
-              : pathname.startsWith(tab.href);
+            cleanHref === "/system/agents"
+              ? cleanPath === "/system/agents" || cleanPath.startsWith("/system/agents/")
+              : cleanPath === cleanHref;
 
           return (
             <Link
