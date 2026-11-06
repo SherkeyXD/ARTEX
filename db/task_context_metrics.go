@@ -418,15 +418,18 @@ ORDER BY id ASC`, expID)
 	report.Composition.TopToolOutputs = topOutputs
 
 	// Compute context composition breakdown
-	// Estimate baseline system prompt tokens/chars if not explicitly tracked
-	const estSystemPromptChars = int64(8000)
-	totalChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives + estSystemPromptChars
-	if totalChars <= 0 {
-		totalChars = 1
+	activityChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives
+	var estSystemPromptChars int64
+	if activityChars > 0 {
+		estSystemPromptChars = 8000
 	}
+	totalChars := activityChars + estSystemPromptChars
 
 	addCat := func(name, cat string, chars int64, color string) {
-		pct := float64(chars) / float64(totalChars) * 100.0
+		var pct float64
+		if totalChars > 0 {
+			pct = float64(chars) / float64(totalChars) * 100.0
+		}
 		report.Composition.Categories = append(report.Composition.Categories, ContextCategory{
 			Name:       name,
 			Category:   cat,
@@ -639,16 +642,18 @@ LIMIT 5000`, cutoff)
 		}
 		report.Composition.TopToolOutputs = topOutputs
 
-		const estSystemPromptChars = int64(8000)
-		totalChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives
-		if totalChars > 0 {
-			totalChars += estSystemPromptChars
-		} else {
-			totalChars = 1
+		activityChars := charToolOutputs + charThinking + charReplies + charToolUse + charDirectives
+		var estSystemPromptChars int64
+		if activityChars > 0 {
+			estSystemPromptChars = 8000
 		}
+		totalChars := activityChars + estSystemPromptChars
 
 		addCat := func(name, cat string, chars int64, color string) {
-			pct := float64(chars) / float64(totalChars) * 100.0
+			var pct float64
+			if totalChars > 0 {
+				pct = float64(chars) / float64(totalChars) * 100.0
+			}
 			report.Composition.Categories = append(report.Composition.Categories, ContextCategory{
 				Name:       name,
 				Category:   cat,
