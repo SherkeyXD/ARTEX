@@ -178,7 +178,7 @@ export default function FindingsPage() {
       try {
         const rows = await api.activeFindingRetests();
         if (disposed || version !== retestRefreshVersion.current) return;
-        const sig = rows.map((item) => `${item.finding_id}:${item.status}:${item.updated_at || ""}`).join(";");
+        const sig = rows.map((item) => `${item.finding_id}:${item.status}:${item.conversation_id || ""}`).join(";");
         if (sig !== activeRetestsSigRef.current) {
           activeRetestsSigRef.current = sig;
           setActiveRetests(Object.fromEntries(rows.map((item) => [item.finding_id, item])));

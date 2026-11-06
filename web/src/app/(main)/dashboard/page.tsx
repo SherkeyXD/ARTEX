@@ -7,14 +7,32 @@ import Link from "next/link";
 import {
   ActivityIcon,
   ArrowUpRightIcon,
+  BotIcon,
+  BrainIcon,
   BugIcon,
+  ChevronRightIcon,
   ClockIcon,
+  GaugeIcon,
+  LayersIcon,
   NetworkIcon,
   ShieldCheckIcon,
   TargetIcon,
+  TerminalIcon,
+  WrenchIcon,
   ZapIcon,
 } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Tooltip as RechartsTooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +46,7 @@ import type {
   Agent,
   ConvTokenSummary,
   Finding,
+  GlobalContextMetricsReport,
   InterceptPending,
   LLMProfile,
   MCPServer,
@@ -61,6 +80,16 @@ function fmtRel(ts?: string | number): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h 前`;
   return `${Math.floor(h / 24)}d 前`;
+}
+
+function fmtMs(ms: number): string {
+  if (ms <= 0) return "0ms";
+  if (ms < 1000) return `${ms}ms`;
+  const sec = ms / 1000;
+  if (sec < 60) return `${sec.toFixed(1)}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = Math.round(sec % 60);
+  return `${min}m ${remSec}s`;
 }
 
 function fmtTokens(n: number): string {
@@ -146,6 +175,7 @@ export default function DashboardPage() {
   const [skills, setSkills] = React.useState<SkillItem[]>([]);
   const [tools, setTools] = React.useState<Tool[]>([]);
   const [llmProfiles, setLLMProfiles] = React.useState<LLMProfile[]>([]);
+  const [contextMetrics, setContextMetrics] = React.useState<GlobalContextMetricsReport | null>(null);
 
   // The task list is the most expensive dashboard source. Poll it independently
   // when the page is visible so a large history cannot hold back every other dashboard panel.
@@ -222,7 +252,8 @@ export default function DashboardPage() {
         skillList.length,
         toolList.length,
         profileList.length,
-        usage.length,
+        usage?.daily?.length,
+        usage?.by_profile?.length,
       ]);
       if (nextSig === slowSigRef.current) return;
       slowSigRef.current = nextSig;
@@ -237,6 +268,20 @@ export default function DashboardPage() {
       /* transient errors */
     }
   }, 15000);
+
+  // Context metrics poll (every 10s)
+  const contextSigRef = React.useRef("");
+  useVisibilityPoll(async () => {
+    try {
+      const rep = await api.globalContextMetrics(tokenDays);
+      const sig = JSON.stringify(rep);
+      if (sig === contextSigRef.current) return;
+      contextSigRef.current = sig;
+      setContextMetrics(rep);
+    } catch {
+      /* transient errors */
+    }
+  }, 10000);
 
   // ── derived ───────────────────────────────────────────────────────────────
 
@@ -297,8 +342,6 @@ export default function DashboardPage() {
   // tasks whose llm_profile_id is null/undefined used the active default profile
   const defaultProfileId = activeProfile ? Number(activeProfile.id) : null;
 
-  // 数据源开关：旧版 = activity（task.tokens + 会话），新版 = llm_usage 计量账本。
-  const [tokenVersion, setTokenVersion] = React.useState<"old" | "new">("old");
   // selected profile tab: "all" = 全部; number = specific profile id
   const [tokenTab, setTokenTab] = React.useState<number | null | "all">("all");
   // day range for the daily bar chart
@@ -367,7 +410,7 @@ export default function DashboardPage() {
     return m;
   }, [usageStats, profileIdByName, defaultProfileId]);
 
-  const tokenByProfile = tokenVersion === "new" ? tokenByProfileNew : tokenByProfileOld;
+  const tokenByProfile = (usageStats?.by_profile?.length ?? 0) > 0 ? tokenByProfileNew : tokenByProfileOld;
 
   const displayedTokens = React.useMemo(() => {
     if (tokenTab === "all") {
@@ -437,7 +480,7 @@ export default function DashboardPage() {
     return [...m.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, v]) => ({ date: date.slice(5), ...v }));
   }, [usageStats, tokenDays, tokenTab, profileIdByName, defaultProfileId]);
 
-  const dailyTokenData = tokenVersion === "new" ? dailyTokenDataNew : dailyTokenDataOld;
+  const dailyTokenData = (usageStats?.daily?.length ?? 0) > 0 ? dailyTokenDataNew : dailyTokenDataOld;
 
   // activity kind label
   function kindLabel(a: Activity): string {
@@ -535,33 +578,34 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* ── Row 2: LLM Token 消耗 ── */}
+      {/* ── Row 2: LLM Token 用量与步骤耗时性能看板 ── */}
       <Card className="p-4">
         {/* Header */}
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b pb-3">
           <div className="flex items-center gap-1.5 text-xs font-semibold">
-            <ZapIcon className="size-3.5 text-muted-foreground" />
-            LLM Token 消耗
-            {/* 数据源开关：旧版=activity 统计（含历史任务），新版=llm_usage 计量账本（更准，仅覆盖启用后） */}
-            <div className="ml-1 flex gap-0.5 rounded-md border bg-muted/30 p-0.5">
+            <BrainIcon className="size-4 text-violet-500" />
+            LLM Token 用量与步骤耗时透视
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Range selector */}
+            <div className="flex gap-0.5 rounded-md border bg-muted/30 p-0.5">
               {(
                 [
-                  { v: "old", label: "旧版" },
-                  { v: "new", label: "新版" },
+                  { days: 7, label: "7天" },
+                  { days: 30, label: "30天" },
+                  { days: 90, label: "3月" },
+                  { days: 180, label: "6月" },
+                  { days: 365, label: "一年" },
                 ] as const
-              ).map(({ v, label }) => (
+              ).map(({ days, label }) => (
                 <button
                   type="button"
-                  key={v}
-                  onClick={() => setTokenVersion(v)}
-                  title={
-                    v === "new"
-                      ? "新版：来自 llm_usage 计量账本，逐次调用精确、含中断消耗；仅覆盖启用后的数据"
-                      : "旧版：来自 activity 统计（含历史任务），中断消耗不计、无法精确到模型"
-                  }
+                  key={days}
+                  onClick={() => setTokenDays(days)}
                   className={cn(
-                    "rounded px-2 py-0.5 text-[9px] font-medium transition-colors",
-                    tokenVersion === v
+                    "rounded px-2.5 py-0.5 text-[9px] font-medium transition-colors",
+                    tokenDays === days
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground",
                   )}
@@ -570,224 +614,356 @@ export default function DashboardPage() {
                 </button>
               ))}
             </div>
-            <span className="text-[10px] font-normal text-muted-foreground">
-              {tokenVersion === "new" ? "llm_usage" : "activity"}
-            </span>
-          </div>
-          {/* Profile tabs */}
-          <div className="flex flex-wrap items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setTokenTab("all")}
-              className={cn(
-                "rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors",
-                tokenTab === "all"
-                  ? "bg-foreground text-background"
-                  : "bg-muted/30 text-muted-foreground hover:text-foreground",
-              )}
-            >
-              全部
-            </button>
-            {llmProfiles.map((p) => {
-              const key = Number(p.id);
-              const hasData = tokenByProfile.has(key) || (p.is_default && tokenByProfile.has(defaultProfileId));
-              const resolvedKey = tokenByProfile.has(key) ? key : p.is_default ? defaultProfileId : key;
-              return (
-                <button
-                  type="button"
-                  key={p.id}
-                  onClick={() => setTokenTab(resolvedKey)}
-                  className={cn(
-                    "flex items-center gap-1 rounded-md px-2.5 py-1 text-[10px] font-medium transition-colors",
-                    tokenTab === resolvedKey
-                      ? "bg-foreground text-background"
-                      : "bg-muted/30 text-muted-foreground hover:text-foreground",
-                    !hasData && "opacity-40",
-                  )}
-                >
-                  {p.name}
-                  {p.is_default && (
-                    <span
-                      className={cn(
-                        "rounded px-1 py-0 text-[8px]",
-                        tokenTab === resolvedKey
-                          ? "bg-background/20 text-background"
-                          : "bg-emerald-500/20 text-emerald-400",
-                      )}
-                    >
-                      默认
-                    </span>
-                  )}
-                </button>
-              );
-            })}
           </div>
         </div>
 
-        {/* Body: metrics left + bar chart right */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[220px_1fr]">
-          {/* Left: key metrics */}
-          <div className="flex flex-col gap-4">
-            {/* Total */}
-            <div>
-              <div className="text-[10px] text-muted-foreground">合计 (输入+输出)</div>
-              <div className="mt-0.5 text-3xl font-bold tabular-nums tracking-tight">
-                {fmtTokens(displayedTokens.input + displayedTokens.output) || "—"}
+        <div className="space-y-4">
+          {/* Part 1: KPI Ribbon (6 维度指标卡) */}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <LayersIcon className="size-3 text-blue-400" /> 总上下文 Tokens
               </div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">{displayedTokens.taskCount} 个任务</div>
+              <div className="mt-1 text-lg font-bold tabular-nums">
+                {fmtTokens(contextMetrics?.summary.total_tokens ?? (displayedTokens.input + displayedTokens.output))}
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                入 {fmtTokens(contextMetrics?.summary.input_tokens ?? displayedTokens.input)} · 出{" "}
+                {fmtTokens(contextMetrics?.summary.output_tokens ?? displayedTokens.output)}
+              </div>
             </div>
 
-            {/* Per-type bars */}
-            <div className="space-y-3">
-              {(() => {
-                // input 已含缓存；拆成不重叠三段：未命中输入 + 缓存命中 + 输出 = 总量。
-                const total = displayedTokens.input + displayedTokens.output;
-                return [
-                  {
-                    label: "输入(未命中)",
-                    value: displayedTokens.input - displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.input.color!,
-                    text: "text-blue-400",
-                  },
-                  {
-                    label: "缓存命中",
-                    value: displayedTokens.cacheRead,
-                    barColor: dailyTrendConfig.cacheRead.color!,
-                    text: "text-emerald-400",
-                  },
-                  {
-                    label: "输出",
-                    value: displayedTokens.output,
-                    barColor: dailyTrendConfig.output.color!,
-                    text: "text-violet-400",
-                  },
-                ].map(({ label, value, barColor, text }) => {
-                  const pct = total > 0 ? (value / total) * 100 : 0;
-                  return (
-                    <div key={label}>
-                      <div className="mb-1 flex items-center justify-between text-[10px]">
-                        <span className="text-muted-foreground">{label}</span>
-                        <span className={cn("font-mono font-semibold tabular-nums", text)}>{fmtTokens(value)}</span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${pct}%`, background: barColor }}
-                        />
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <ZapIcon className="size-3 text-emerald-400" /> Prompt 缓存命中率
+              </div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-emerald-400">
+                {contextMetrics && (contextMetrics.summary.input_tokens > 0 || contextMetrics.summary.cache_read_tokens > 0)
+                  ? `${Math.round((contextMetrics.summary.cache_hit_rate ?? 0) * 100)}%`
+                  : displayedTokens.input > 0
+                    ? `${Math.round((displayedTokens.cacheRead / displayedTokens.input) * 100)}%`
+                    : "0%"}
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                命中 {fmtTokens(contextMetrics?.summary.cache_read_tokens ?? displayedTokens.cacheRead)}
+              </div>
             </div>
 
-            {/* Cache hit rate */}
-            {(() => {
-              // input 已含缓存 → 命中率 = 缓存命中 / 总输入。
-              const denominator = displayedTokens.input;
-              const hitPct = denominator > 0 ? Math.round((displayedTokens.cacheRead / denominator) * 100) : 0;
-              return (
-                <div className="flex items-center justify-between rounded-lg border bg-muted/20 px-3 py-2 text-[10px]">
-                  <span className="text-muted-foreground">缓存命中率</span>
-                  <span
-                    className={cn("font-semibold tabular-nums", hitPct > 50 ? "text-emerald-400" : "text-amber-400")}
-                  >
-                    {hitPct}%
-                  </span>
-                </div>
-              );
-            })()}
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <BrainIcon className="size-3 text-violet-400" /> 思考耗时 (Thinking)
+              </div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-violet-400">
+                {fmtMs(contextMetrics?.summary.thinking_duration_ms ?? 0)}
+              </div>
+              <div className="text-[9px] text-muted-foreground">模型深度推理阶段</div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <WrenchIcon className="size-3 text-amber-400" /> 工具耗时 (Tools)
+              </div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-amber-400">
+                {fmtMs(contextMetrics?.summary.tool_duration_ms ?? 0)}
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                调用 {contextMetrics?.summary.tool_calls ?? 0} 次
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <ClockIcon className="size-3 text-cyan-400" /> LLM 生成耗时
+              </div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-cyan-400">
+                {fmtMs(contextMetrics?.summary.llm_duration_ms ?? 0)}
+              </div>
+              <div className="text-[9px] text-muted-foreground">
+                调用 {contextMetrics?.summary.llm_calls ?? 0} 次
+              </div>
+            </div>
+
+            <div className="rounded-lg border bg-muted/15 p-2.5">
+              <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                <GaugeIcon className="size-3 text-pink-400" /> 生成吞吐速度
+              </div>
+              <div className="mt-1 text-lg font-bold tabular-nums text-pink-400">
+                {(contextMetrics?.summary.avg_tokens_per_sec ?? 0) > 0
+                  ? `${(contextMetrics?.summary.avg_tokens_per_sec ?? 0).toFixed(1)} t/s`
+                  : "—"}
+              </div>
+              <div className="text-[9px] text-muted-foreground">平均出词速率</div>
+            </div>
           </div>
 
-          {/* Right: daily bar chart */}
-          <div className="flex min-h-0 flex-col">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="flex gap-3 text-[9px] text-muted-foreground">
-                {(["input", "output", "cacheRead"] as const).map((k) => (
-                  <span key={k} className="flex items-center gap-1">
-                    <span
-                      className="inline-block size-2 rounded-sm"
-                      style={{ background: dailyTrendConfig[k].color }}
-                    />
-                    {dailyTrendConfig[k].label}
-                  </span>
-                ))}
+          {/* Part 2: 核心分析区 (4 象限网格) */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* 象限 1: 上下文构成拆解 */}
+            <div className="flex flex-col rounded-lg border bg-muted/10 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <LayersIcon className="size-3.5 text-muted-foreground" /> 上下文构成拆解 (Tokens)
+                </span>
+                <span className="text-[9px] text-muted-foreground">按类型占比</span>
               </div>
-              <div className="flex gap-0.5 rounded-md border bg-muted/30 p-0.5">
-                {(
-                  [
-                    { days: 7, label: "7天" },
-                    { days: 30, label: "30天" },
-                    { days: 90, label: "3月" },
-                    { days: 180, label: "6月" },
-                    { days: 365, label: "一年" },
-                  ] as const
-                ).map(({ days, label }) => (
-                  <button
-                    type="button"
-                    key={days}
-                    onClick={() => setTokenDays(days)}
-                    className={cn(
-                      "rounded px-2.5 py-0.5 text-[9px] font-medium transition-colors",
-                      tokenDays === days
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
+
+              <div className="flex items-center gap-4">
+                <div className="h-[120px] w-[120px] shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={
+                          (contextMetrics?.composition.categories.length ?? 0) > 0 &&
+                          contextMetrics!.composition.categories.some((c) => c.tokens > 0)
+                            ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
+                            : [{ name: "暂无数据", tokens: 1, color: "hsl(var(--muted))" }]
+                        }
+                        dataKey="tokens"
+                        nameKey="name"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={30}
+                        outerRadius={50}
+                        paddingAngle={2}
+                      >
+                        {(
+                          (contextMetrics?.composition.categories.length ?? 0) > 0 &&
+                          contextMetrics!.composition.categories.some((c) => c.tokens > 0)
+                            ? contextMetrics!.composition.categories.filter((c) => c.tokens > 0)
+                            : [{ color: "hsl(var(--muted))" }]
+                        ).map((cat, idx) => (
+                          <Cell key={`cell-${idx}`} fill={cat.color || "#8884d8"} />
+                        ))}
+                      </Pie>
+                      <RechartsTooltip
+                        formatter={(v: any, name: any) => [`${fmtTokens(Number(v))} Tokens`, name]}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+
+                <div className="flex-1 space-y-1.5">
+                  {(
+                    (contextMetrics?.composition.categories.length ?? 0) > 0 &&
+                    contextMetrics!.composition.categories.some((c) => c.chars > 0)
+                      ? contextMetrics!.composition.categories
+                      : [
+                          { name: "工具返回 (Tool Outputs)", percentage: 0, color: "#f59e0b" },
+                          { name: "历史对话 (History)", percentage: 0, color: "#3b82f6" },
+                          { name: "思考过程 (Thinking)", percentage: 0, color: "#8b5cf6" },
+                          { name: "系统指令 (System Prompt)", percentage: 0, color: "#64748b" },
+                        ]
+                  ).map((cat) => (
+                    <div key={cat.name} className="text-[10px]">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-1 truncate text-muted-foreground">
+                          <span className="size-1.5 rounded-full" style={{ background: cat.color }} />
+                          {cat.name.split(" ")[0]}
+                        </span>
+                        <span className="font-mono tabular-nums font-medium">
+                          {cat.percentage ? `${cat.percentage.toFixed(1)}%` : "0%"}
+                        </span>
+                      </div>
+                      <Progress value={cat.percentage ?? 0} className="h-1 mt-0.5" />
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
 
-            {dailyTokenData.length === 0 ? (
-              <div
-                className="flex flex-1 items-center justify-center rounded-lg border bg-muted/10 text-xs text-muted-foreground"
-                style={{ minHeight: 180 }}
-              >
-                暂无数据
+            {/* 象限 2: 步骤耗时构成透视 */}
+            <div className="flex flex-col rounded-lg border bg-muted/10 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <ClockIcon className="size-3.5 text-muted-foreground" /> 各步骤耗时分布 (Latency)
+                </span>
+                <span className="text-[9px] text-muted-foreground">
+                  总计 {fmtMs(contextMetrics?.summary.total_duration_ms ?? 0)}
+                </span>
               </div>
-            ) : (
-              <ChartContainer config={dailyTrendConfig} className="h-[200px] w-full">
-                <BarChart data={dailyTokenData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} maxBarSize={40}>
-                  <CartesianGrid vertical={false} />
-                  <XAxis
-                    dataKey="date"
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 10 }}
-                    tickMargin={6}
-                    interval="preserveStartEnd"
-                  />
-                  <YAxis
-                    tickFormatter={(v) => fmtTokens(Number(v))}
-                    tickLine={false}
-                    axisLine={false}
-                    tick={{ fontSize: 10 }}
-                    width={44}
-                  />
-                  <ChartTooltip
-                    cursor={false}
-                    content={
-                      <ChartTooltipContent
-                        indicator="line"
-                        formatter={(value, name) => (
-                          <div className="flex w-full items-center justify-between gap-4">
-                            <span>
-                              {(dailyTrendConfig as Record<string, { label: string }>)[String(name)]?.label ??
-                                String(name)}
+
+              <div className="flex flex-col justify-around flex-1 space-y-2.5">
+                {(() => {
+                  const totalDur = (contextMetrics?.summary.total_duration_ms ?? 0) || 1;
+                  const thinkMs = contextMetrics?.summary.thinking_duration_ms ?? 0;
+                  const toolMs = contextMetrics?.summary.tool_duration_ms ?? 0;
+                  const llmMs = contextMetrics?.summary.llm_duration_ms ?? 0;
+                  const genMs = Math.max(0, llmMs - thinkMs);
+
+                  const items = [
+                    { label: "思考推理 (Thinking)", ms: thinkMs, color: "#8b5cf6", text: "text-violet-400" },
+                    { label: "工具执行 (Tools)", ms: toolMs, color: "#f59e0b", text: "text-amber-400" },
+                    { label: "模型生成 (Generation)", ms: genMs, color: "#06b6d4", text: "text-cyan-400" },
+                  ];
+
+                  return (
+                    <>
+                      <div className="flex h-3 w-full overflow-hidden rounded-full bg-muted">
+                        {items.map((it) => (
+                          <div
+                            key={it.label}
+                            className="h-full transition-all duration-300"
+                            style={{
+                              width: totalDur > 1 ? `${(it.ms / totalDur) * 100}%` : "0%",
+                              background: it.color,
+                            }}
+                            title={`${it.label}: ${fmtMs(it.ms)}`}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="space-y-2 mt-1">
+                        {items.map((it) => (
+                          <div key={it.label} className="flex items-center justify-between text-[10px]">
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <span className="size-2 rounded-sm" style={{ background: it.color }} />
+                              {it.label}
                             </span>
-                            <span className="font-mono font-semibold tabular-nums">{fmtTokens(Number(value))}</span>
+                            <div className="flex items-center gap-2">
+                              <span className={cn("font-mono font-semibold tabular-nums", it.text)}>
+                                {fmtMs(it.ms)}
+                              </span>
+                              <span className="text-[9px] text-muted-foreground w-8 text-right font-mono">
+                                {totalDur > 1 ? `${Math.round((it.ms / totalDur) * 100)}%` : "0%"}
+                              </span>
+                            </div>
                           </div>
-                        )}
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* 象限 3: Token 每日消耗趋势 */}
+            <div className="flex flex-col rounded-lg border bg-muted/10 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <ZapIcon className="size-3.5 text-muted-foreground" /> Token 消耗趋势 (Daily Trend)
+                </span>
+                <div className="flex gap-2 text-[9px] text-muted-foreground">
+                  {(["input", "output", "cacheRead"] as const).map((k) => (
+                    <span key={k} className="flex items-center gap-1">
+                      <span
+                        className="inline-block size-1.5 rounded-sm"
+                        style={{ background: dailyTrendConfig[k].color }}
                       />
-                    }
-                  />
-                  <Bar dataKey="input" stackId="1" fill="var(--color-input)" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="output" stackId="1" fill="var(--color-output)" radius={[0, 0, 0, 0]} />
-                  <Bar dataKey="cacheRead" stackId="1" fill="var(--color-cacheRead)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ChartContainer>
+                      {dailyTrendConfig[k].label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {dailyTokenData.length === 0 ? (
+                <div className="flex flex-1 items-center justify-center rounded-lg border bg-background/30 text-[10px] text-muted-foreground min-h-[120px]">
+                  暂无 Token 消耗趋势数据
+                </div>
+              ) : (
+                <ChartContainer config={dailyTrendConfig} className="h-[120px] w-full">
+                  <BarChart data={dailyTokenData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} maxBarSize={30}>
+                    <CartesianGrid vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 9 }}
+                      tickMargin={4}
+                      interval="preserveStartEnd"
+                    />
+                    <YAxis
+                      tickFormatter={(v) => fmtTokens(Number(v))}
+                      tickLine={false}
+                      axisLine={false}
+                      tick={{ fontSize: 9 }}
+                      width={38}
+                    />
+                    <ChartTooltip
+                      cursor={false}
+                      content={
+                        <ChartTooltipContent
+                          indicator="line"
+                          formatter={(value, name) => (
+                            <div className="flex w-full items-center justify-between gap-4 text-[10px]">
+                              <span>
+                                {(dailyTrendConfig as Record<string, { label: string }>)[String(name)]?.label ??
+                                  String(name)}
+                              </span>
+                              <span className="font-mono font-semibold tabular-nums">{fmtTokens(Number(value))}</span>
+                            </div>
+                          )}
+                        />
+                      }
+                    />
+                    <Bar dataKey="input" stackId="1" fill="var(--color-input)" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="output" stackId="1" fill="var(--color-output)" radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="cacheRead" stackId="1" fill="var(--color-cacheRead)" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ChartContainer>
+              )}
+            </div>
+
+            {/* 象限 4: Top 5 最耗上下文工具排行榜 */}
+            <div className="flex flex-col rounded-lg border bg-muted/10 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11px] font-semibold flex items-center gap-1.5">
+                  <TerminalIcon className="size-3.5 text-muted-foreground" /> Top 5 最耗上下文工具
+                </span>
+                <span className="text-[9px] text-muted-foreground">上下文膨胀排行</span>
+              </div>
+
+              <div className="flex-1 space-y-1.5 overflow-hidden">
+                {(contextMetrics?.composition.top_tool_outputs?.length ?? 0) === 0 ? (
+                  <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground py-4">
+                    暂无工具执行与膨胀记录
+                  </div>
+                ) : (
+                  contextMetrics!.composition.top_tool_outputs.slice(0, 5).map((tool, idx) => (
+                    <div
+                      key={idx}
+                      className="flex items-center justify-between rounded border bg-background/50 px-2 py-1 text-[10px]"
+                    >
+                      <div className="flex items-center gap-1.5 truncate pr-2">
+                        <span className="font-mono text-[9px] text-muted-foreground">#{idx + 1}</span>
+                        <span className="font-semibold text-foreground truncate">{tool.tool || "tool"}</span>
+                        <span className="text-[9px] text-muted-foreground truncate">{tool.summary}</span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-mono text-amber-500">{fmtTokens(tool.estimated_tokens)} tok</span>
+                        <span className="font-mono text-muted-foreground text-[9px]">{fmtMs(tool.duration_ms)}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Part 3: 底部综合透视栏 */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-muted/10 px-3 py-2 text-[10px]">
+            <div className="flex items-center gap-2">
+              <BotIcon className="size-3.5 text-muted-foreground" />
+              <span className="font-medium text-foreground">Agent 角色分工:</span>
+              {(contextMetrics?.fleet?.length ?? 0) === 0 ? (
+                <span className="text-muted-foreground">Planner / Worker 准备就绪，运行任务时将自动实时统计</span>
+              ) : (
+                contextMetrics!.fleet.map((f) => (
+                  <div key={f.worker} className="flex items-center gap-1 rounded bg-background/60 px-2 py-0.5 border">
+                    <span className="font-medium">{f.role || f.worker}:</span>
+                    <span className="font-mono text-blue-400">{fmtTokens(f.input_tokens + f.output_tokens)} tok</span>
+                    <span className="text-muted-foreground">({f.calls}次)</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {tasks.length > 0 && (
+              <Link
+                href={`/function/tasks/detail?id=${tasks[0].id}&tab=context`}
+                className="flex items-center gap-1 text-primary hover:underline font-medium text-[10px]"
+              >
+                查看最新任务完整上下文瀑布流 <ChevronRightIcon className="size-3" />
+              </Link>
             )}
           </div>
         </div>

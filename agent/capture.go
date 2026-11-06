@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,27 +48,47 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 		}
 	}
 	toolNames := map[string]string{} // tool_use id -> name, to label results
+	toolStartTimes := map[string]time.Time{}
 
 	var tbuf strings.Builder
 	var tkind string
+	var kindStartTime time.Time
+	promptStart := time.Now()
+	var firstTokenTime time.Time
+
 	flush := func() {
 		if tbuf.Len() == 0 {
 			return
 		}
 		s := strings.TrimSpace(tbuf.String())
 		k := tkind
+		dur := int64(0)
+		if !kindStartTime.IsZero() {
+			dur = time.Since(kindStartTime).Milliseconds()
+		}
 		tbuf.Reset()
 		tkind = ""
+		kindStartTime = time.Time{}
 		if s != "" {
-			rec(db.Activity{Kind: k, Summary: firstLine(s, 200), Detail: s})
+			meta, _ := json.Marshal(map[string]any{
+				"duration_ms": dur,
+				"char_count":  len(s),
+			})
+			rec(db.Activity{Kind: k, Summary: firstLine(s, 200), Detail: s, Metadata: meta})
 		}
 	}
 	addDelta := func(kind, text string) {
 		if text == "" {
 			return
 		}
+		if firstTokenTime.IsZero() {
+			firstTokenTime = time.Now()
+		}
 		if tkind != "" && tkind != kind {
 			flush()
+		}
+		if tkind == "" {
+			kindStartTime = time.Now()
 		}
 		tkind = kind
 		tbuf.WriteString(text)
@@ -80,12 +101,21 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 	for ev, err := range s.Prompt(ctx, input) {
 		if err != nil {
 			flush()
+			totalMs := time.Since(promptStart).Milliseconds()
+			ttftMs := int64(0)
+			if !firstTokenTime.IsZero() {
+				ttftMs = firstTokenTime.Sub(promptStart).Milliseconds()
+			}
+			meta, _ := json.Marshal(map[string]any{
+				"total_ms": totalMs,
+				"ttft_ms":  ttftMs,
+			})
 			if ctx.Err() != nil { // engine/user cancellation, not a provider failure
 				sum, detail := terminalText(ctx, &harness.Terminal{Reason: reason, Err: ctx.Err()}, lastTool)
-				rec(activityWithUsage(db.Activity{Kind: "result", Summary: firstLine(sum, 400), Detail: detail}, lastUsage))
+				rec(activityWithUsage(db.Activity{Kind: "result", Summary: firstLine(sum, 400), Detail: detail, Metadata: meta}, lastUsage))
 				return finalText, reason, ctx.Err()
 			}
-			rec(activityWithUsage(db.Activity{Kind: "result", IsError: true, Summary: "执行出错: " + err.Error(), Detail: err.Error()}, lastUsage))
+			rec(activityWithUsage(db.Activity{Kind: "result", IsError: true, Summary: "执行出错: " + err.Error(), Detail: err.Error(), Metadata: meta}, lastUsage))
 			return finalText, reason, err
 		}
 		switch ev.Kind {
@@ -94,7 +124,11 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				continue
 			}
 			flush()
+			if firstTokenTime.IsZero() {
+				firstTokenTime = time.Now()
+			}
 			toolNames[ev.ToolUse.ID] = ev.ToolUse.Name
+			toolStartTimes[ev.ToolUse.ID] = time.Now()
 			in := string(ev.ToolUse.Input)
 			lastTool.start(ev.ToolUse.ID, ev.ToolUse.Name, in)
 			auditTrace.Start(ev.ToolUse.ID, ev.ToolUse.Name, ev.ToolUse.Input)
@@ -108,8 +142,16 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			out := blocksText(ev.ToolResult.Content)
 			lastTool.done(ev.ToolResult.ToolUseID)
 			auditTrace.Complete(ev.ToolResult.ToolUseID, out, ev.ToolResult.IsError)
+			toolDur := int64(0)
+			if st, ok := toolStartTimes[ev.ToolResult.ToolUseID]; ok {
+				toolDur = time.Since(st).Milliseconds()
+			}
+			meta, _ := json.Marshal(map[string]any{
+				"duration_ms": toolDur,
+				"char_count":  len(out),
+			})
 			rec(db.Activity{Kind: "tool_result", Tool: toolNames[ev.ToolResult.ToolUseID], ToolUseID: ev.ToolResult.ToolUseID,
-				IsError: ev.ToolResult.IsError, Summary: firstLine(out, 200), Detail: out})
+				IsError: ev.ToolResult.IsError, Summary: firstLine(out, 200), Detail: out, Metadata: meta})
 		case harness.KindText:
 			addDelta("text", ev.Text)
 		case harness.KindThinking:
@@ -145,8 +187,18 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 					sum, detail = terminalText(ctx, ev.Terminal, lastTool)
 				}
 				u := ev.Terminal.Usage // cumulative token usage for this session
+				totalMs := time.Since(promptStart).Milliseconds()
+				ttftMs := int64(0)
+				if !firstTokenTime.IsZero() {
+					ttftMs = firstTokenTime.Sub(promptStart).Milliseconds()
+				}
+				meta, _ := json.Marshal(map[string]any{
+					"total_ms": totalMs,
+					"ttft_ms":  ttftMs,
+				})
 				rec(db.Activity{Kind: "result", IsError: ev.Terminal.Err != nil,
 					Summary: firstLine(sum, 400), Detail: detail,
+					Metadata: meta,
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
 					CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
 				if ev.Terminal.Err != nil {

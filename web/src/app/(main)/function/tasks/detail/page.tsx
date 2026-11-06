@@ -43,6 +43,7 @@ import type { LLMProfile, Task } from "@/lib/types";
 
 import { AssetsTab } from "./_tabs/assets-tab";
 import { BroadcastTab } from "./_tabs/broadcast-tab";
+import { ContextTab } from "./_tabs/context-tab";
 import { CoverageGraphTab } from "./_tabs/coverage-graph-tab";
 import { FindingsTab } from "./_tabs/findings-tab";
 import { GraphTab } from "./_tabs/graph-tab";
@@ -61,6 +62,7 @@ const TABS = [
   { value: "retests", label: "复测" },
   { value: "assets", label: "测试资产" },
   { value: "coverage", label: "资产覆盖图" },
+  { value: "context", label: "上下文监控" },
   { value: "intercept", label: "拦截审批" },
   { value: "report", label: "报告" },
 ];
@@ -441,6 +443,9 @@ function TaskDetailInner() {
         </TabsContent>
         <TabsContent value="coverage" className="mt-0">
           <CoverageGraphTab taskId={id} coverageEnabled={task?.coverage_enabled !== false} />
+        </TabsContent>
+        <TabsContent value="context" className="mt-0">
+          <ContextTab taskId={id} />
         </TabsContent>
         <TabsContent value="intercept" className="mt-0">
           <InterceptTab taskId={id} />
