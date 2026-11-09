@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
-	"github.com/Autumn-27/norma/harness"
 )
 
 // TerminalReason is the canonical terminal reason type in the universal runtime.
@@ -26,6 +26,15 @@ const (
 	ReasonAbortedStreaming  = runtime.ReasonAbortedStreaming
 	ReasonAbortedTools      = runtime.ReasonAbortedTools
 )
+
+// TerminalResult holds the terminal execution outcome.
+type TerminalResult struct {
+	Reason runtime.TerminalReason
+	Err    error
+	Text   string
+	Turns  int
+	Usage  llm.Usage
+}
 
 // runTrace retains the latest tool call so an interrupted run can identify the
 // operation that was still in flight.
@@ -48,27 +57,28 @@ func (t *runTrace) done(id string) {
 	}
 }
 
-var reasonHint = map[harness.TerminalReason]string{
-	harness.ReasonCompleted:         "模型正常结束了本轮，但没有留下文字总结；事实和资产以本轮工具调用记录为准",
-	harness.ReasonMaxTurns:          "达到步数上限(MaxTurns)：SDK 已执行收尾并写回事实和资产，意图会标记为 exhausted，供规划者换方向继续，而不是作为失败处理",
-	harness.ReasonTimeout:           "达到单次运行的墙钟预算(MaxDuration)：到点会打断在跑的工具并就地进收尾，把已识别的事实和资产写回，意图会标记为 exhausted",
-	harness.ReasonModelError:        "模型或 API 调用失败（网络、鉴权、限流、供应商 5xx 等），重试用尽后意图标记为 blocked——传输层故障导致这条意图基本没真正探成；查其执行过程（get_worker_trace）后再决定重派或换法",
-	harness.ReasonBlockingLimit:     "上下文长度达到硬上限，请求在发出前被拦截；应收窄意图粒度或压缩工具返回",
-	harness.ReasonPromptTooLong:     "提示词过长且上下文压缩重试已经用尽，无法继续执行",
-	harness.ReasonImageError:        "当前模型不支持本轮多模态内容；请切换支持视觉的模型或避免工具返回图片",
-	harness.ReasonStopHookPrevented: "Stop 钩子阻止本轮结束，随后未能继续；请检查任务 Guard 规则是否过严",
-	harness.ReasonHookStopped:       "工具或钩子主动停止继续执行，例如越界目标或禁用命令；请检查最后一条 tool_result 的拦截说明",
-	harness.ReasonAbortedStreaming:  "运行在模型输出流式生成阶段被取消",
-	harness.ReasonAbortedTools:      "运行在工具执行阶段被取消",
+var reasonHint = map[runtime.TerminalReason]string{
+	runtime.ReasonCompleted:         "模型正常结束了本轮，但没有留下文字总结；事实和资产以本轮工具调用记录为准",
+	runtime.ReasonMaxTurns:          "达到步数上限(MaxTurns)：已执行收尾并写回事实和资产，意图会标记为 exhausted，供规划者换方向继续，而不是作为失败处理",
+	runtime.ReasonTimeout:           "达到单次运行的墙钟预算(MaxDuration)：到点会打断在跑的工具并就地进收尾，把已识别的事实和资产写回，意图会标记为 exhausted",
+	runtime.ReasonModelError:        "模型或 API 调用失败（网络、鉴权、限流、供应商 5xx 等），重试用尽后意图标记为 blocked——传输层故障导致这条意图基本没真正探成；查其执行过程（get_worker_trace）后再决定重派或换法",
+	runtime.ReasonBlockingLimit:     "上下文长度达到硬上限，请求在发出前被拦截；应收窄意图粒度或压缩工具返回",
+	runtime.ReasonPromptTooLong:     "提示词过长且上下文压缩重试已经用尽，无法继续执行",
+	runtime.ReasonImageError:        "当前模型不支持本轮多模态内容；请切换支持视觉的模型或避免工具返回图片",
+	runtime.ReasonStopHookPrevented: "Stop 钩子阻止本轮结束，随后未能继续；请检查任务 Guard 规则是否过严",
+	runtime.ReasonHookStopped:       "工具或钩子主动停止继续执行，例如越界目标或禁用命令；请检查最后一条 tool_result 的拦截说明",
+	runtime.ReasonAbortedStreaming:  "运行在模型输出流式生成阶段被取消",
+	runtime.ReasonAbortedTools:      "运行在工具执行阶段被取消",
 }
 
 // terminalText renders a terminal event with no final text into a compact summary
 // and a Markdown detail block.
-func terminalText(ctx context.Context, term *harness.Terminal, tr *runTrace) (string, string) {
+func terminalText(ctx context.Context, term *TerminalResult, tr *runTrace) (string, string) {
+	if term == nil {
+		term = &TerminalResult{}
+	}
 	reason := term.Reason
-	aborted := reason == harness.ReasonAbortedStreaming || reason == harness.ReasonAbortedTools
-	// Prompt may return ctx.Err directly without a terminal event. Preserve the
-	// cancellation cause instead of falling back to an empty/unknown terminal reason.
+	aborted := reason == runtime.ReasonAbortedStreaming || reason == runtime.ReasonAbortedTools
 	if reason == "" && ctx.Err() != nil {
 		aborted = true
 	}
@@ -81,13 +91,13 @@ func terminalText(ctx context.Context, term *harness.Terminal, tr *runTrace) (st
 		}
 		stage := "执行过程中"
 		switch reason {
-		case harness.ReasonAbortedStreaming:
+		case runtime.ReasonAbortedStreaming:
 			stage = "模型输出阶段"
-		case harness.ReasonAbortedTools:
+		case runtime.ReasonAbortedTools:
 			stage = "工具执行阶段"
 		}
 		sum = "（运行被中断：" + short + "；停在" + stage + progressSuffix(term, tr) + "，未完成）"
-	} else if reason == harness.ReasonMaxTurns || reason == harness.ReasonTimeout {
+	} else if reason == runtime.ReasonMaxTurns || reason == runtime.ReasonTimeout {
 		sum = "（达到运行预算上限(" + string(reason) + ")，已收尾写回事实" + progressSuffix(term, tr) + "；本次无文字总结）"
 	} else {
 		hint := terminalReasonHint(reason)
@@ -136,24 +146,24 @@ func terminalText(ctx context.Context, term *harness.Terminal, tr *runTrace) (st
 	return sum, b.String()
 }
 
-func terminalReasonLabel(reason harness.TerminalReason) string {
+func terminalReasonLabel(reason runtime.TerminalReason) string {
 	if reason == "" {
 		return "context_canceled"
 	}
 	return string(reason)
 }
 
-func terminalReasonHint(reason harness.TerminalReason) string {
+func terminalReasonHint(reason runtime.TerminalReason) string {
 	if hint := reasonHint[reason]; hint != "" {
 		return hint
 	}
 	if reason == "" {
 		return "运行的 context 已取消，但底层没有产生 Terminal 事件"
 	}
-	return "未知终态；harness 可能新增了 TerminalReason，请补充 reasonHint"
+	return "未知终态；runtime 可能新增了 TerminalReason，请补充 reasonHint"
 }
 
-func progressSuffix(term *harness.Terminal, tr *runTrace) string {
+func progressSuffix(term *TerminalResult, tr *runTrace) string {
 	var parts []string
 	if term.Turns > 0 {
 		parts = append(parts, fmt.Sprintf("%d 轮", term.Turns))

@@ -152,7 +152,7 @@ func (d *Driver) ExecuteTurn(ctx context.Context, session *runtime.Session, opts
 	recordTool := func(call *runtime.ToolCallData, content string, isError bool, duration time.Duration, captured ...bool) error {
 		content = runtime.SanitizeToolOutput(content)
 		count := utf8.RuneCountInString(content)
-		if count > toolLimit && !(len(captured) > 0 && captured[0]) {
+		if count > toolLimit && !(len(captured) > 0 && captured[0]) && !strings.Contains(content, "<persisted-output>") {
 			content = string([]rune(content)[:toolLimit]) + fmt.Sprintf("\n... [输出截断: 共 %d 字符，已保留前 %d 字符]", count, toolLimit)
 		}
 		toolResult := &runtime.ToolResultData{ToolCallID: call.ID, ToolName: call.Name, Content: content, IsError: isError, DurationMs: duration.Milliseconds(), CharCount: count}

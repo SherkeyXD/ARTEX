@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
@@ -143,4 +145,53 @@ func captureRuntimeTurn(
 	rec(db.Activity{Kind: "result", Summary: firstLine(detail, 400), Detail: detail, IsError: err != nil, Metadata: meta, InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
 
 	return res.FinalText, reason, err
+}
+
+// Preserve the recorded session's visible messages, excluding thinking blocks.
+// This is audit context; the judge receives only bounded, paired execution
+// evidence selected from it, never assistant prose or thinking blocks.
+func approvalHistory(messages []llm.Message) []db.InterceptContextEntry {
+	var entries []db.InterceptContextEntry
+	for _, message := range messages {
+		for _, block := range message.Content {
+			entry := db.InterceptContextEntry{Kind: string(message.Role)}
+			switch block.Type {
+			case llm.BlockText:
+				entry.Text = block.Text
+			case llm.BlockToolUse:
+				entry.Kind, entry.Tool, entry.ToolUseID, entry.Text = "tool_use", block.Name, block.ID, string(block.Input)
+			case llm.BlockToolResult:
+				entry.Kind, entry.ToolUseID, entry.Text, entry.IsError = "tool_result", block.ToolUseID, blocksText(block.Content), block.IsError
+			default:
+				continue
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func blocksText(blocks []llm.ContentBlock) string {
+	var b strings.Builder
+	for _, bl := range blocks {
+		if bl.Type == llm.BlockText && bl.Text != "" {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(bl.Text)
+		}
+	}
+	return b.String()
+}
+
+// firstLine returns a single-line, rune-capped preview for the summary column.
+func firstLine(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if before, _, found := strings.Cut(s, "\n"); found {
+		s = before
+	}
+	if utf8.RuneCountInString(s) > max {
+		s = string([]rune(s)[:max]) + "…"
+	}
+	return s
 }

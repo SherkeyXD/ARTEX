@@ -6,8 +6,7 @@ import (
 	"testing"
 
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
-	acperm "github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 func TestToUniversalTool(t *testing.T) {
@@ -17,7 +16,6 @@ func TestToUniversalTool(t *testing.T) {
 		Schema: map[string]any{
 			"type": "object",
 		},
-		Permissions: func(context.Context, json.RawMessage, acperm.Context) acperm.Decision { return acperm.Allowed() },
 		Run: func(ctx context.Context, in json.RawMessage, _ *actool.ToolContext) (actool.Result, error) {
 			return actool.Text("result-from-tool"), nil
 		},

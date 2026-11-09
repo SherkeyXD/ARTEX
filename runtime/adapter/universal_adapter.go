@@ -7,9 +7,9 @@ import (
 	"iter"
 	"strings"
 
-	actool "github.com/Autumn-27/norma/tool"
 	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
 )
 
@@ -23,7 +23,7 @@ func ToUniversalTool(ct actool.CoreTool) runtime.Tool {
 	if ct == nil {
 		return nil
 	}
-	return &UniversalToolAdapter{coreTool: ct}
+	return ct
 }
 
 // ToUniversalTools converts a slice of CoreTools into universal runtime.Tools.

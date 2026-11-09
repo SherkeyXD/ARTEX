@@ -62,18 +62,6 @@ func TestActiveHarnessDefaultAndFallback(t *testing.T) {
 	if ActiveHarness() != HarnessPi {
 		t.Fatalf("expected harness to be %q, got %q", HarnessPi, ActiveHarness())
 	}
-
-	// Legacy norma fallback
-	t.Setenv("ARTEX_HARNESS", "norma")
-	if ActiveHarness() != HarnessNorma {
-		t.Fatalf("expected harness to be %q, got %q", HarnessNorma, ActiveHarness())
-	}
-
-	// Legacy alias
-	t.Setenv("ARTEX_HARNESS", "legacy")
-	if ActiveHarness() != HarnessNorma {
-		t.Fatalf("expected harness to be %q, got %q", HarnessNorma, ActiveHarness())
-	}
 }
 
 func TestWorkerUniversalRunner(t *testing.T) {

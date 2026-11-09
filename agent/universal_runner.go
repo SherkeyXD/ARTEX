@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	actool "github.com/Autumn-27/norma/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/llm"
@@ -17,23 +15,18 @@ import (
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	_ "github.com/SherkeyXD/ARTEX/runtime/harness/pi"
 	"github.com/SherkeyXD/ARTEX/runtime/middleware"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // HarnessKind identifies the underlying agent execution harness.
 type HarnessKind string
 
 const (
-	HarnessPi     HarnessKind = "pi"
-	HarnessNorma  HarnessKind = "norma"  // legacy fallback
-	HarnessLegacy HarnessKind = "legacy" // alias
+	HarnessPi HarnessKind = "pi"
 )
 
-// ActiveHarness returns the configured harness (from ARTEX_HARNESS env, defaulting to pi).
+// ActiveHarness returns the configured harness (defaults to pi).
 func ActiveHarness() HarnessKind {
-	h := os.Getenv("ARTEX_HARNESS")
-	if h == "norma" || h == "legacy" {
-		return HarnessNorma
-	}
 	return HarnessPi
 }
 
@@ -183,8 +176,7 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 ) (runtime.TerminalReason, error) {
 	sessionID := WorkerSessionID(explorationID(ts), intent.ID)
 	clock := taskClockFrom(ctx)
-	maxDuration, clamped := clampMaxDuration(clock.DeadlineUnix, w.runTimeout)
-	settlement := wrapupSettlementForTask("worker", []string{"Bash"}, clamped)
+	maxDuration, _ := clampMaxDuration(clock.DeadlineUnix, w.runTimeout)
 	options := UniversalAgentOptions{
 		AgentKey:        name,
 		SessionID:       sessionID,
@@ -198,8 +190,6 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 		MaxTokens:       w.maxTokens(),
 		NonStreaming:    w.nonStreaming(),
 		MaxDuration:     maxDuration,
-		Settlement:      nativeSettlement(settlement),
-		Compaction:      nativeCompaction(compactionConfig(w.compactionWindow())),
 		ToolOutputLimit: 4000,
 		WorkingDir:      ensureRunDir(w.workDir, taskID, intent.ID),
 		Hooks:           hooks,

@@ -19,8 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/norma/compaction"
-	"github.com/Autumn-27/norma/transcript"
 	"github.com/SherkeyXD/ARTEX/llm"
 )
 
@@ -119,16 +117,6 @@ func (c Config) CompactionWindow() int {
 		k = maxWindowK
 	}
 	return k * 1000
-}
-
-// compactionConfig builds the agent-core compaction config for a context window
-// in tokens. agentcore.NewSession wires the summarizer (same provider) when this
-// is set on Options.Compaction.
-func compactionConfig(windowTokens int) *compaction.Config {
-	if windowTokens <= 0 {
-		windowTokens = defaultWindowK * 1000
-	}
-	return &compaction.Config{ContextWindow: windowTokens}
 }
 
 // FromEnv resolves the LLM provider config:
@@ -318,8 +306,8 @@ func IsQuotaExhaustedMessage(message string) bool {
 		!strings.Contains(message, "too many requests")
 }
 
-// quotaAwareTransport preserves Norma's normal retry behavior except for a 429
-// whose body explicitly says the account quota/balance is exhausted. Norma's
+// quotaAwareTransport preserves standard retry behavior except for a 429
+// whose body explicitly says the account quota/balance is exhausted. Standard
 // retry loop treats every 429 as transient; normalizing only that response to
 // 402 lets a task router fail over immediately while retaining the original
 // response body for provider-specific classification and audit logs.
@@ -333,15 +321,10 @@ type quotaAwareTransport struct {
 
 func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Custom session-id header: name is user-configured, value is THIS run's
-	// session id (norma stashes it on the context via transcript.WithSessionID).
-	// Stable across a session's turns and distinct across sessions — exactly what
-	// a session-keyed prompt cache wants. Skipped when no session id is present.
+	// session id (stashed on context via llm.WithSessionID).
+	// Stable across a session's turns and distinct across sessions.
 	if t.sessionHeaderKey != "" {
-		sid, _ := llm.SessionIDFrom(req.Context())
-		if sid == "" {
-			sid = transcript.SessionIDFrom(req.Context())
-		}
-		if sid != "" {
+		if sid, _ := llm.SessionIDFrom(req.Context()); sid != "" {
 			req.Header.Set(t.sessionHeaderKey, sid)
 		}
 	}
@@ -369,7 +352,7 @@ func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error
 }
 
 // requestBodySnapshot copies an outgoing request body without consuming it.
-// norma builds every model request from a *bytes.Reader, so net/http populates
+// Every model request is built from a *bytes.Reader or bytes.Buffer, so net/http populates
 // GetBody and the copy has no effect on what gets sent.
 func requestBodySnapshot(req *http.Request) string {
 	if req.GetBody == nil {

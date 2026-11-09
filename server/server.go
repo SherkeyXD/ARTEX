@@ -25,7 +25,7 @@ import (
 	"github.com/SherkeyXD/ARTEX/llmpool"
 	"github.com/SherkeyXD/ARTEX/report"
 	"github.com/SherkeyXD/ARTEX/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // BuildVersion is the backend application version, injected from cmd/artex at

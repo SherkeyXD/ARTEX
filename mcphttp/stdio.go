@@ -12,8 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // StdioClient connects to an MCP server running as a local child process.
@@ -206,9 +205,6 @@ func (c *StdioClient) wrap(rt remoteTool) actool.CoreTool {
 		Name:        full,
 		Description: rt.Description,
 		Schema:      schema,
-		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
-			return permission.AskUser("call MCP tool " + full + "?")
-		},
 		Run: func(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 			var args any
 			if len(in) > 0 {

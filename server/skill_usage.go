@@ -10,7 +10,7 @@ import (
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/runtime/skill"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // maxLedgerSkillName caps the skill name stored for a MISS — that string comes

@@ -13,7 +13,7 @@ import (
 	"sort"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // digestMemberEntry builds the compact per-member view expand_digest returns —

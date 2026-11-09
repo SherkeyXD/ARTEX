@@ -9,8 +9,7 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	acperm "github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // compactIntents distills intents to {id, summary, state, asset_ids, parents,
@@ -267,9 +266,8 @@ func idp(desc string) map[string]any {
 func readTool(name, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (actool.Result, error)) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name: name, Description: desc, Schema: schema,
-		ReadOnly:    func(json.RawMessage) bool { return true },
-		Concurrent:  func(json.RawMessage) bool { return true },
-		Permissions: func(context.Context, json.RawMessage, acperm.Context) acperm.Decision { return acperm.Allowed() },
+		ReadOnly:   func(json.RawMessage) bool { return true },
+		Concurrent: func(json.RawMessage) bool { return true },
 		Run: func(ctx context.Context, in json.RawMessage, _ *actool.ToolContext) (actool.Result, error) {
 			return run(ctx, in)
 		},
@@ -279,7 +277,6 @@ func readTool(name, desc string, schema map[string]any, run func(context.Context
 func writeTool(name, desc string, schema map[string]any, run func(context.Context, json.RawMessage) (actool.Result, error)) actool.CoreTool {
 	return actool.Build(actool.Spec{
 		Name: name, Description: desc, Schema: schema,
-		Permissions: func(context.Context, json.RawMessage, acperm.Context) acperm.Decision { return acperm.Allowed() },
 		Run: func(ctx context.Context, in json.RawMessage, _ *actool.ToolContext) (actool.Result, error) {
 			return run(ctx, in)
 		},

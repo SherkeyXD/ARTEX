@@ -7,9 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/llm"
@@ -492,100 +490,38 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
-	system, boundary := deferredSystem(sysBody, def)
-	// planner 无自身墙钟预算;有 deadline 时把 MaxDuration 夹逼到剩余,让在跑的规划轮在
-	// 任务到点时进收尾(因超时→任务超时词,因步数→per-run 词)。
-	maxDur, clamped := clampMaxDuration(tc.DeadlineUnix, 0)
-	settle := wrapupSettlement("planner", nil)
-	if tc.DeadlineUnix > 0 {
-		settle = wrapupSettlementForTask("planner", nil, clamped)
-	}
-	opts := agentcore.Options{
-		Provider:        toNormaProvider(p.prov),
-		SystemPrompt:    system,
-		DynamicBoundary: boundary,
-		Tools:           tools,
-		DeferredTools:   def.Deferred,
-		UnlockSet:       def.Unlock,
-		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true,
-		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
-		EnableWebSearch:       p.webSearch.Enabled,
-		WebSearchBackend:      p.webSearch.Backend,
-		BraveSearchAPIKey:     p.webSearch.BraveKey,
-		TavilySearchAPIKey:    p.webSearch.TavilyKey,
-		DeepSeekSearchBaseURL: p.webSearch.DeepSeekBaseURL,
-		DeepSeekSearchAPIKey:  p.webSearch.DeepSeekAPIKey,
-		DeepSeekSearchModel:   p.webSearch.DeepSeekModel,
-		WebSearchProxy:        p.webSearch.Proxy,
-		WorkingDir:            taskDir, // 本任务工作目录 <workDir>/tasks/<taskID>
-		ToolOutputDir:         cmdOutDir(taskDir),
-		MaxTurns:              p.maxTurns, // 0 = unlimited (configurable in agent management)
-		MaxDuration:           maxDur,     // 0=不限;有 deadline 时=距 deadline 剩余
-		Compaction:            compactionConfig(p.compactionWindow()),
-		// 跨唤醒共享的规划待办：让串行链在多轮之间保留（session 是新的，store 不是）。
-		Todos: p.todoFor(ts.ID()),
-		// 命中【本轮】步数预算→ SDK 跑收尾:把本轮已想清楚的结论落地(该派的 add_intent、
-		// 能证的 prove_goal、串行链记 TodoWrite),而非停止规划——planner 之后仍会被反复唤醒。
-		// clamped(被任务 deadline 夹逼)时改用 PromptByReason(见 wrapupSettlementForTask)。
-		Settlement:   settle,
-		NonStreaming: p.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    p.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
-	}
-	// 态势（刚完成的意图 + 完整图）现在拼进本轮 user 输入（见下方 input）。user 里还有
-	// 指令 + 跨唤醒待办（todo 是模型自己的规划便签，可再生，放 user 即可）。
-	// 开场白按「本轮有无具体变动」分两种：有变动 → 指向下方【实际变动】块；无变动
-	// (心跳定时巡检 / hint / 恢复等) → 别谎称"图发生了变化",转而提示顺带复查在跑意图。
+	system, _ := deferredSystem(sysBody, def)
+	todos := p.todoFor(ts.ID())
+
 	lead := "刚有具体变动（见下面的【本次触发本轮的实际变动】），据此规划下一步："
 	if len(triggers) == 0 {
 		lead = "本轮是**定时巡检（心跳到点）/无具体变动信号**的唤醒——图不一定有新变动。顺带复查在跑意图：长时间无进展或跑偏的用 steer_work 纠偏、方向整个错的用 kill_work 止损；再判定目标、决定是否补方向："
-		// 心跳/无变动唤醒时,若全图已无任何 open 或 running 意图 → 探索已停摆(没 worker 在跑、
-		// 也没排队方向)。明确告知 planner 并强制其本轮补出新方向,别只复查在跑意图后空转一轮。
 		if active, err := ts.HasActiveIntent(); err == nil && !active {
 			lead = "本轮是**定时巡检（心跳到点）**的唤醒,且当前**已没有任何 open 或 running 的意图**——没有 worker 在跑、也没有排队中的方向,探索已停摆。你**必须**在本轮产出一个或多个向目标推进、且与图中既有意图**互不重复**的新意图(不得产出 0 意图);先据下面的态势判定目标是否已达成,未达成则立即补方向："
 		}
 	}
 	input := lead + situational + "\n\n据上面的态势，判定目标。目标已【真正达成】（已拿到目标成果/已确认目标漏洞）时用 prove_goal 逐个标记。**硬底线：只要目标尚未达成、且当前没有任何 open 或 running 意图（frontier_open=0 且 running_intents 为空），本轮就必须产出至少一个向目标推进的意图——此时没有在跑的 work 可等、也没有在排队的方向，产出 0 意图=任务停摆。仅当已有 open/running 意图在推进、或目标已达成时，本轮才可以不产出新意图。**" +
-		renderPlannerTodos(opts.Todos.List())
+		renderPlannerTodos(todos.List())
 
-	if ActiveHarness() == HarnessPi {
-		_, _, err = RunUniversalAgent(ctx, UniversalAgentOptions{
-			AgentKey:        "planner",
-			SessionID:       fmt.Sprintf("planner-%d", taskID),
-			TaskID:          taskID,
-			Model:           p.model,
-			Provider:        p.prov,
-			SystemPrompts:   system,
-			DynamicBoundary: boundary,
-			NonStreaming:    p.nonStreaming(),
-			MaxDuration:     maxDur,
-			Settlement:      nativeSettlement(opts.Settlement),
-			Compaction:      nativeCompaction(opts.Compaction),
-			Input:           input,
-			Tools:           tools,
-			MaxTurns:        p.maxTurns,
-			MaxTokens:       p.maxTokens(),
-			ToolOutputLimit: 4000,
-			WorkingDir:      taskDir,
-			Emit: func(r db.Activity) {
-				if emit != nil {
-					r.Worker = "planner"
-					emit(r)
-				}
-			},
-		})
-		return tsx.GoalMet, tsx.Reason, err
-	}
-
-	// MaxDuration 现在会在墙钟到点打断在跑工具并就地进收尾(在活 ctx 上),单轮卡死不再
-	// 绕过收尾,无需外部硬 ctx 兜底。ctx 只承载 pause / kill / shutdown。
-	_, _, err = captureRun(ctx, opts, input,
-		func(r db.Activity) {
+	_, _, err = RunUniversalAgent(ctx, UniversalAgentOptions{
+		AgentKey:        "planner",
+		SessionID:       fmt.Sprintf("planner-%d", taskID),
+		TaskID:          taskID,
+		Model:           p.model,
+		Provider:        p.prov,
+		SystemPrompts:   system,
+		Input:           input,
+		Tools:           tools,
+		MaxTurns:        p.maxTurns,
+		MaxTokens:       p.maxTokens(),
+		ToolOutputLimit: 4000,
+		WorkingDir:      taskDir,
+		Emit: func(r db.Activity) {
 			if emit != nil {
-				r.Worker = "planner" // planner activity has no intent_id (it generates them)
+				r.Worker = "planner"
 				emit(r)
 			}
-		})
+		},
+	})
 	return tsx.GoalMet, tsx.Reason, err
 }

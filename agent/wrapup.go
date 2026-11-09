@@ -2,8 +2,6 @@ package agent
 
 import (
 	"strings"
-
-	"github.com/Autumn-27/norma/harness"
 )
 
 // 收尾提示词(wrap-up / settlement prompt):当 agent 因【步数耗尽(MaxTurns)】或
@@ -87,18 +85,6 @@ func resolveWrapupTurns(agentKey string) int {
 	return WrapupTurnsDefault(agentKey)
 }
 
-// wrapupSettlement builds the settlement config for an agent's run. Prompt and the
-// turn budget are admin-editable per agent; disabled tools are code-owned policy so
-// a user can't edit away the "stop probing" guardrail. Resolved fresh each run
-// (reads DB live), so edits apply on the next run without a restart.
-func wrapupSettlement(agentKey string, disabledTools []string) *harness.Settlement {
-	return &harness.Settlement{
-		Prompt:        resolveWrapup(agentKey),
-		DisabledTools: disabledTools,
-		MaxTurns:      resolveWrapupTurns(agentKey),
-	}
-}
-
 // ---------- 任务级超时收尾词（见 docs/任务级超时与收尾设计.md）----------
 //
 // 与 per-run 收尾词是【两套】：per-run 是"你这一次 run 的预算用完了"；任务超时是
@@ -144,30 +130,4 @@ func resolveTaskTimeoutTurns(agentKey string) int {
 		}
 	}
 	return resolveWrapupTurns(agentKey) // 默认沿用 per-run 轮数
-}
-
-// wrapupSettlementForTask builds settlement for a worker/planner run that is aware
-// of the task deadline. See §5 of the design doc:
-//   - clamped=true  → 本次 run 被任务 deadline 夹逼：因 Timeout 收尾=任务到点→任务超时词；
-//     因 MaxTurns 收尾=夹逼窗口内步数先耗尽、任务还剩几分钟→回落 per-run 词。
-//   - clamped=false → 任务还早：两种 reason 都用 per-run 词（即退化为 wrapupSettlement）。
-//
-// 交给 harness 的 PromptByReason 在收尾时按【实际】reason 现场挑，无 build 时错配。
-func wrapupSettlementForTask(agentKey string, disabledTools []string, clamped bool) *harness.Settlement {
-	perRun := resolveWrapup(agentKey)
-	st := &harness.Settlement{
-		Prompt:        perRun, // 兜底(也是非 clamped 时两种 reason 的取值)
-		DisabledTools: disabledTools,
-		MaxTurns:      resolveWrapupTurns(agentKey),
-	}
-	if clamped {
-		if tt := resolveTaskTimeoutWrapup(agentKey); tt != "" {
-			st.PromptByReason = map[harness.TerminalReason]string{
-				harness.ReasonTimeout:  tt,     // 任务到点
-				harness.ReasonMaxTurns: perRun, // 步数先耗尽、任务还剩时间
-			}
-			st.MaxTurns = resolveTaskTimeoutTurns(agentKey)
-		}
-	}
-	return st
 }

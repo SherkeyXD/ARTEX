@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Autumn-27/norma/agentcore"
-	acperm "github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
-	"github.com/Autumn-27/norma/transcript"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // goalsDefaultTmpl is the built-in EDITABLE body (段 [A]) of the goals-decomposer
@@ -120,7 +117,6 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	if ts != nil {
 		sid := fmt.Sprintf("exp%d-goals", ts.ID())
 		ctx = llm.WithSessionID(ctx, sid)
-		ctx = transcript.WithSessionID(ctx, sid)
 	}
 	// worker="goals" tags the goal nodes' provenance; ts/taskID let set_goals link
 	// each goal under the task root. This is the catalog's real set_goals tool, so a
@@ -152,36 +148,20 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 			emit(r)
 		}
 	}
-	if ActiveHarness() == HarnessPi {
-		_, _, _ = RunUniversalAgent(ctx, UniversalAgentOptions{
-			AgentKey:        "goals",
-			SessionID:       fmt.Sprintf("task-%d-goals", taskID),
-			TaskID:          taskID,
-			Provider:        prov,
-			SystemPrompts:   []string{sys},
-			Input:           userMsg,
-			Tools:           tools,
-			MaxTurns:        8,
-			MaxTokens:       maxTokens,
-			NonStreaming:    nonStreaming,
-			Ephemeral:       true,
-			ToolOutputLimit: 4000,
-			WorkingDir:      ensureRunDir(dataDir, taskID, 0),
-			Emit:            captureEmit,
-		})
-	} else {
-		captureRun(ctx, agentcore.Options{
-			Provider:               toNormaProvider(prov),
-			SystemPrompt:           []string{sys},
-			Tools:                  tools,
-			PermissionMode:         acperm.ModeBypass,
-			DisableBackgroundTasks: true,
-			// 3 步(抽约束 → 登记范围 → 拆目标)各需一次工具调用,给足回合避免收尾前漏调 set_goals。
-			MaxTurns:     8,
-			NonStreaming: nonStreaming, // 该 profile 选非流式时走 Provider.Complete
-			MaxTokens:    maxTokens,    // 0 = 不发上限,由服务端默认值决定
-		}, userMsg, captureEmit)
-	}
+	_, _, _ = RunUniversalAgent(ctx, UniversalAgentOptions{
+		AgentKey:        "goals",
+		SessionID:       fmt.Sprintf("task-%d-goals", taskID),
+		TaskID:          taskID,
+		Provider:        prov,
+		SystemPrompts:   []string{sys},
+		Input:           userMsg,
+		Tools:           tools,
+		MaxTurns:        8,
+		MaxTokens:       maxTokens,
+		ToolOutputLimit: 4000,
+		WorkingDir:      ensureRunDir(dataDir, taskID, 0),
+		Emit:            captureEmit,
+	})
 	// set_goals persisted the goals directly; read them back so the caller sees what
 	// was written (empty slice ⇒ the LLM produced nothing ⇒ caller falls back).
 	if ts == nil {

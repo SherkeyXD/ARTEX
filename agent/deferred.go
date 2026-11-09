@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/SherkeyXD/ARTEX/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // deferredSystem builds an agent's system-prompt segments and cache boundary from

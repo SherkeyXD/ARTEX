@@ -288,7 +288,7 @@ server {
 
 ## 系统技术架构
 
-ARTEX 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ PostgreSQL，agent 能力由 [`norma`](https://github.com/Autumn-27/norma) SDK 提供（`agentcore` / `tool` / `permission` / `harness` / `memory` / `transcript`）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
+ARTEX 是一套 **LLM 多 agent 驱动的自主渗透系统**：Go 单体后端（内嵌 Next.js 前端）+ PostgreSQL，底层运行基于原生的 Universal Agent Runtime（Pi 驱动，具备原生 LLM Provider 与工具体系）。核心是**双图架构**，以及围绕它的两条自主性机制：**worker 间过程级信息交换**与 **planner 多轮共享 todolist 稳定攻击链路**。
 
 ### 总体分层
 
@@ -302,7 +302,7 @@ flowchart TB
     ENG["engine 调度循环"]
     MGR["Manager　任务/引擎/store 生命周期"]
   end
-  subgraph AG["agent（norma SDK）"]
+  subgraph AG["agent（Universal Agent Runtime）"]
     GO["goals　目标分解 + 提取范围"]
     PL["planner　规划者（唯一意图生成者）"]
     WK["worker　执行者 ×N"]

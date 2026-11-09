@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/SherkeyXD/ARTEX/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 func TestDeferredSystem_NoGlobal(t *testing.T) {

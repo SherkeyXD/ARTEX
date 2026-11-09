@@ -14,8 +14,7 @@ import (
 	"sync"
 
 	"github.com/SherkeyXD/ARTEX/runtime"
-	acperm "github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"gopkg.in/yaml.v3"
 )
 
@@ -181,9 +180,6 @@ func (r *Registry) Tool() actool.CoreTool {
 		},
 		ReadOnly:   func(json.RawMessage) bool { return true },
 		Concurrent: func(json.RawMessage) bool { return false },
-		Permissions: func(context.Context, json.RawMessage, acperm.Context) acperm.Decision {
-			return acperm.Allowed()
-		},
 		Run: func(_ context.Context, input json.RawMessage, _ *actool.ToolContext) (actool.Result, error) {
 			var in struct {
 				Name string `json:"name"`
