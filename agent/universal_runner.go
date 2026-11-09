@@ -60,6 +60,8 @@ type UniversalAgentOptions struct {
 	Guard             *guard.Guard
 	GuardFunc         middleware.GuardFunc
 	Emit              func(db.Activity)
+	Deferred          DeferredInfo
+	Todos             *actool.TodoStore
 }
 
 // RunUniversalAgent executes one agent turn using the Universal Agent Runtime (Pi Driver).
@@ -105,6 +107,34 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 		return "", reason, err
 	}
 	defer release()
+	shells := actool.NewShellManager(ctx, opts.WorkingDir, nil)
+	defer shells.Close()
+	ctx = actool.WithShellManager(ctx, shells)
+	if opts.Todos == nil {
+		opts.Todos = actool.NewTodoStore()
+	}
+	if value, ok := session.GetMetadata("todos"); ok {
+		data, marshalErr := json.Marshal(value)
+		var todos []actool.Todo
+		if marshalErr != nil {
+			return "", runtime.ReasonModelError, marshalErr
+		}
+		if err := json.Unmarshal(data, &todos); err != nil {
+			return "", runtime.ReasonModelError, fmt.Errorf("restore todos: %w", err)
+		}
+		opts.Todos.Set(todos)
+	}
+	defer func() { session.SetMetadata("todos", opts.Todos.List()); _ = session.Checkpoint() }()
+	tools = appendMissingTools(tools, opts.Todos.TodoWrite(), opts.Todos.TodoRead())
+	seedUnlockFromHistory(adapter.ToProviderMessages(session.Messages()), opts.Deferred.UnlockSkill)
+	if names, ok := session.GetMetadata("loaded_skills"); ok && opts.Deferred.UnlockSkill != nil {
+		data, _ := json.Marshal(names)
+		var restored []string
+		_ = json.Unmarshal(data, &restored)
+		for _, name := range restored {
+			opts.Deferred.UnlockSkill(name)
+		}
+	}
 
 	// 4. Setup Middleware chain: Guard + Metrics
 	var guardFunc middleware.GuardFunc
@@ -114,6 +144,10 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 	guardMw := middleware.NewGuardMiddleware(guardFunc)
 	metrics := middleware.NewMetricsRecorder(nil)
 	chain := runtime.NewMiddlewareChain(guardMw, metrics)
+	chain.Add(&sessionStateMiddleware{session: session, todos: opts.Todos, calls: make(map[string]*runtime.ToolCallData)})
+	if len(opts.Deferred.Deferred) > 0 {
+		tools, chain = configureDeferredTools(tools, opts.Deferred, chain)
+	}
 	hooks := opts.Hooks
 	if hooks == nil && opts.Guard != nil {
 		hooks = opts.Guard.Hooks()
@@ -176,7 +210,7 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 ) (runtime.TerminalReason, error) {
 	sessionID := WorkerSessionID(explorationID(ts), intent.ID)
 	clock := taskClockFrom(ctx)
-	maxDuration, _ := clampMaxDuration(clock.DeadlineUnix, w.runTimeout)
+	maxDuration, clamped := clampMaxDuration(clock.DeadlineUnix, w.runTimeout)
 	options := UniversalAgentOptions{
 		AgentKey:        name,
 		SessionID:       sessionID,
@@ -190,6 +224,8 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 		MaxTokens:       w.maxTokens(),
 		NonStreaming:    w.nonStreaming(),
 		MaxDuration:     maxDuration,
+		Settlement:      wrapupSettlementForTask("worker", []string{"Bash", "shell_open", "shell_send"}, clamped),
+		Compaction:      compactionConfig(w.compactionWindow()),
 		ToolOutputLimit: 4000,
 		WorkingDir:      ensureRunDir(w.workDir, taskID, intent.ID),
 		Hooks:           hooks,
@@ -198,6 +234,7 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 	if len(settings) > 0 {
 		options.SystemPrompts = settings[0].SystemPrompts
 		options.DynamicBoundary = settings[0].DynamicBoundary
+		options.Deferred = settings[0].Deferred
 	}
 	_, reason, err := RunUniversalAgent(ctx, options)
 	return reason, err

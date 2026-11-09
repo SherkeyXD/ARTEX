@@ -103,11 +103,16 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
 	base := actool.DefaultTools()
+	var err error
+	base, err = addNetworkTools(base, ws)
+	if err != nil {
+		return "", err
+	}
 	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID})
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
-	system, _ := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
+	system, boundary := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
 	ctx = attachSideCapture(ctx, c.prov)
 
 	text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
@@ -116,6 +121,12 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		Model:           c.model,
 		Provider:        c.prov,
 		SystemPrompts:   system,
+		DynamicBoundary: boundary,
+		NonStreaming:    c.nonStreaming(),
+		MaxDuration:     maxDuration,
+		Settlement:      wrapupSettlement(agentKey, nil),
+		Compaction:      compactionConfig(c.window),
+		Deferred:        def,
 		Input:           message,
 		Tools:           tools,
 		MaxTurns:        maxTurns,

@@ -46,3 +46,7 @@ func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actoo
 	}
 	return m.CoreTool.Call(ctx, input, tc)
 }
+
+func (m *meteredTool) Execute(ctx context.Context, input json.RawMessage) (any, error) {
+	return actool.ExecuteCall(ctx, m, input)
+}

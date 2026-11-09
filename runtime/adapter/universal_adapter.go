@@ -3,7 +3,6 @@ package adapter
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"iter"
 	"strings"
 
@@ -23,7 +22,7 @@ func ToUniversalTool(ct actool.CoreTool) runtime.Tool {
 	if ct == nil {
 		return nil
 	}
-	return ct
+	return &UniversalToolAdapter{coreTool: ct}
 }
 
 // ToUniversalTools converts a slice of CoreTools into universal runtime.Tools.
@@ -54,59 +53,11 @@ func (a *UniversalToolAdapter) Description() string {
 }
 
 func (a *UniversalToolAdapter) ParametersSchema() json.RawMessage {
-	schemaMap := a.coreTool.InputSchema()
-	if schemaMap == nil {
-		return json.RawMessage(`{"type":"object"}`)
-	}
-	b, err := json.Marshal(schemaMap)
-	if err != nil {
-		return json.RawMessage(`{"type":"object"}`)
-	}
-	return b
+	return a.coreTool.ParametersSchema()
 }
 
 func (a *UniversalToolAdapter) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
-	execution := runtime.ToolExecutionFrom(ctx)
-	toolContext := &actool.ToolContext{
-		WorkingDir: execution.WorkingDir, AgentID: execution.AgentID,
-		ToolUseID: execution.ToolUseID, OutputDir: execution.OutputDir,
-		MaxOutputChars: execution.MaxOutputChars,
-	}
-	res, err := a.coreTool.Call(ctx, rawArgs, toolContext)
-	if err != nil {
-		return nil, err
-	}
-
-	var sb strings.Builder
-	for _, cb := range res.Content {
-		if string(cb.Type) == string(llm.BlockText) {
-			sb.WriteString(cb.Text)
-		}
-	}
-
-	if res.IsError {
-		return nil, fmt.Errorf("%s", sb.String())
-	}
-	content := actool.CaptureOnce(toolContext, runtime.SanitizeToolOutput(sb.String()))
-	captured := strings.Contains(content, "<persisted-output>") || strings.Contains(content, "characters truncated]")
-	if len(res.Extra) > 0 || captured {
-		var messages []runtime.Message
-		for _, message := range res.Extra {
-			parts := make([]runtime.Part, 0, len(message.Content))
-			for _, block := range message.Content {
-				if string(block.Type) == string(llm.BlockText) {
-					parts = append(parts, runtime.TextPart(block.Text))
-				}
-			}
-			role := runtime.RoleUser
-			if string(message.Role) == string(llm.RoleAssistant) {
-				role = runtime.RoleAssistant
-			}
-			messages = append(messages, runtime.Message{Role: role, Parts: parts})
-		}
-		return runtime.ToolOutput{Content: content, Messages: messages, Captured: captured}, nil
-	}
-	return content, nil
+	return actool.ExecuteCall(ctx, a.coreTool, rawArgs)
 }
 
 // UniversalLLMAdapter adapts an external llm.Provider (including llmpool.Pool) into runtime.LLMProvider.

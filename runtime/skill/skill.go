@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
 	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"gopkg.in/yaml.v3"
@@ -200,56 +201,18 @@ func (r *Registry) Tool() actool.CoreTool {
 			if strings.TrimSpace(in.Args) != "" {
 				body += "\n\n## Additional context from the caller\n\n" + in.Args
 			}
-			ack := fmt.Sprintf("Skill %q loaded:\n\n%s", s.Name, body)
 			if r.OnInvoke != nil {
 				if extra := r.OnInvoke(s); extra != "" {
-					ack += "\n\n" + extra
+					body += "\n\n" + extra
 				}
 			}
-			return actool.Text(ack), nil
+			result := actool.Text(fmt.Sprintf("Skill %q loaded. Follow its instructions in the next message.", s.Name))
+			result.Extra = []llm.Message{llm.UserText(body)}
+			return result, nil
 		},
 	})
 }
 
-// UniversalTool builds a canonical runtime.Tool representation of the skill invoker.
-func (r *Registry) UniversalTool() runtime.Tool {
-	schema := json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"name": {"type": "string", "description": "The skill to invoke."},
-			"args": {"type": "string", "description": "Optional additional context for the skill."}
-		},
-		"required": ["name"]
-	}`)
-	desc := "Invokes a named skill — a reusable procedure — and returns its step-by-step instructions for you to follow. Available skills:" + r.listing()
-
-	return runtime.NewFuncTool("Skill", desc, schema, func(ctx context.Context, rawArgs json.RawMessage) (any, error) {
-		var in struct {
-			Name string `json:"name"`
-			Args string `json:"args"`
-		}
-		if err := json.Unmarshal(rawArgs, &in); err != nil {
-			return nil, err
-		}
-		s, ok := r.Get(in.Name)
-		if !ok {
-			return fmt.Sprintf("Error: unknown skill %q. Available: %s", in.Name, strings.Join(r.names(), ", ")), nil
-		}
-		instructions := s.Instructions
-		if s.Dir != "" {
-			instructions = strings.ReplaceAll(instructions, "${SKILL_DIR}", s.Dir)
-		}
-		body := instructions
-		if strings.TrimSpace(in.Args) != "" {
-			body += "\n\n## Additional context from the caller\n\n" + in.Args
-		}
-
-		ack := fmt.Sprintf("Skill %q loaded:\n\n%s", s.Name, body)
-		if r.OnInvoke != nil {
-			if extra := r.OnInvoke(s); extra != "" {
-				ack += "\n\n" + extra
-			}
-		}
-		return ack, nil
-	})
-}
+// UniversalTool uses the same result contract as Tool, including full skill
+// instructions as a separate message and ordinary errors for unknown skills.
+func (r *Registry) UniversalTool() runtime.Tool { return r.Tool() }
