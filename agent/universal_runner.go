@@ -47,7 +47,6 @@ type UniversalAgentOptions struct {
 	SystemPrompts     []string
 	Input             string
 	Tools             []actool.CoreTool
-	UTools            []runtime.UTool
 	UniversalTools    []runtime.Tool
 	MaxTurns          int
 	MaxTokens         int
@@ -57,17 +56,15 @@ type UniversalAgentOptions struct {
 }
 
 // RunUniversalAgent executes one agent turn using the Universal Agent Runtime (Pi Driver).
-// It adapts legacy tool and LLM definitions into canonical UTool and LLMProvider interfaces,
+// It adapts legacy tool and LLM definitions into canonical runtime.Tool and LLMProvider interfaces,
 // configures middleware pipelines (Guard, Metrics), and captures turn activity streams.
 func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string, harness.TerminalReason, error) {
-	// 1. Resolve tools to universal UTools
-	var uTools []runtime.Tool
-	if len(opts.UTools) > 0 {
-		uTools = opts.UTools
-	} else if len(opts.UniversalTools) > 0 {
-		uTools = opts.UniversalTools
+	// 1. Resolve tools to universal runtime.Tools
+	var tools []runtime.Tool
+	if len(opts.UniversalTools) > 0 {
+		tools = opts.UniversalTools
 	} else if len(opts.Tools) > 0 {
-		uTools = adapter.ToUniversalTools(opts.Tools)
+		tools = adapter.ToUniversalTools(opts.Tools)
 	}
 
 	// 2. Resolve LLM provider
@@ -98,7 +95,7 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 	cfg := runtime.AgentConfig{
 		Name:            opts.AgentKey,
 		SystemPrompt:    sysPrompt,
-		Tools:           uTools,
+		Tools:           tools,
 		DriverID:        "pi",
 		ModelName:       opts.Model,
 		MaxTokens:       opts.MaxTokens,

@@ -16,9 +16,6 @@ type Tool interface {
 	Execute(ctx context.Context, rawArgs json.RawMessage) (any, error)
 }
 
-// UTool is an alias for Tool, representing the canonical Universal Tool interface.
-type UTool = Tool
-
 // UniversalTool is an alias for Tool.
 type UniversalTool = Tool
 

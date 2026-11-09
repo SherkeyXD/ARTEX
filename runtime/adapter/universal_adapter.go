@@ -13,7 +13,7 @@ import (
 	actool "github.com/Autumn-27/norma/tool"
 )
 
-// UniversalToolAdapter wraps an existing tool into a universal runtime.Tool (UTool).
+// UniversalToolAdapter wraps an existing tool into a universal runtime.Tool.
 type UniversalToolAdapter struct {
 	coreTool actool.CoreTool
 }
