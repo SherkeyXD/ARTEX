@@ -172,3 +172,40 @@ func TestPiDriverExecutionLoop(t *testing.T) {
 			hasFirstToken, hasToolStart, hasToolEnd)
 	}
 }
+
+func TestPiDriverToolOutputSanitization(t *testing.T) {
+	ctx := context.Background()
+	driver := pi.NewDriver()
+
+	session := runtime.NewSession("test-sanitizer-sess", "worker-recon", "task-2")
+	session.AppendMessage(runtime.NewUserMessage("Run recon tool"))
+
+	mockProvider := &mockLLMProvider{}
+
+	toolWithColorsAndProgress := runtime.NewFuncTool("port_scan", "runs scan", json.RawMessage(`{"type":"object"}`), func(ctx context.Context, rawArgs json.RawMessage) (any, error) {
+		return "\x1b[31;1m[CRITICAL]\x1b[0m \x1b[32m[CVE-2024-9999]\x1b[0m Found vulnerability\r\nScanning: 50%\rScanning: 100%\nScan complete.\n", nil
+	})
+
+	opts := runtime.TurnOptions{
+		SystemPrompt:    "You are a pentest agent.",
+		Tools:           []runtime.Tool{toolWithColorsAndProgress},
+		Provider:        mockProvider,
+		MaxIterations:   5,
+		ToolOutputLimit: 1000,
+	}
+
+	result, err := driver.ExecuteTurn(ctx, session, opts, runtime.NewMiddlewareChain(), nil)
+	if err != nil {
+		t.Fatalf("ExecuteTurn failed: %v", err)
+	}
+
+	if len(result.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call result, got %d", len(result.ToolCalls))
+	}
+
+	tcResult := result.ToolCalls[0].Content
+	expected := "[CRITICAL] [CVE-2024-9999] Found vulnerability\nScanning: 100%\nScan complete.\n"
+	if tcResult != expected {
+		t.Fatalf("expected sanitized output:\n%q\ngot:\n%q", expected, tcResult)
+	}
+}

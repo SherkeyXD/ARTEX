@@ -331,7 +331,10 @@ func (d *Driver) ExecuteTurn(
 					}
 				}
 
-				// Apply Context Truncation to prevent token blowup
+				// 1. Sanitize tool output (strip ANSI styles and terminal progress overwrites)
+				outputStr = runtime.SanitizeToolOutput(outputStr)
+
+				// 2. Apply Context Truncation to prevent token blowup
 				origLen := len(outputStr)
 				if origLen > toolLimit {
 					outputStr = outputStr[:toolLimit] + fmt.Sprintf("\n... [输出截断: 共 %d 字符，已保留前 %d 字符]", origLen, toolLimit)
