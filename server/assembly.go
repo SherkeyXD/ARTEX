@@ -10,8 +10,8 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/skill"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/runtime/skill"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // wireAgentAugment connects the PG agent_visibility table into the agent runtime:

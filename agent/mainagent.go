@@ -2,13 +2,12 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // MainAgent is the thin human-interface orchestrator (docs §4.2 / §7). The human
@@ -16,16 +15,16 @@ import (
 // (→planner) or direct high-priority intents (→frontier). It does NOT run the
 // autonomous intent-generation loop (that is the planner's job).
 type MainAgent struct {
-	prov            llm.Provider
-	model           string
-	window          int                                    // context window in tokens (for compaction)
-	windowFn        func() int                             // optional dynamic task-chain minimum
-	maxTurns        int                                    // max agent turns per run (0 = unlimited)
-	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
-	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
-	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
-	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	prov           llm.Provider
+	model          string
+	window         int                                    // context window in tokens (for compaction)
+	windowFn       func() int                             // optional dynamic task-chain minimum
+	maxTurns       int                                    // max agent turns per run (0 = unlimited)
+	webSearch      WebSearchOpts                          // web_search tool backend selection (off by default)
+	workDir        string                                 // shared work dir (surfaced in prompt as artifact-output target)
+	steerWork      func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
+	nonStreamingFn func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
+	maxTokensFn    func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
@@ -108,6 +107,11 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.MainAgentTools()), actool.DefaultTools()...)
+	var err error
+	base, err = addNetworkTools(base, m.webSearch)
+	if err != nil {
+		return "", err
+	}
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "mainagent", base)
 	defer cleanup()
@@ -115,43 +119,32 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	mainDir := ensureRunDir(m.workDir, taskID, 0)
 	ctx = intercept.WithReviewWorkingDirectory(ctx, mainDir)
 	system, boundary := deferredSystem(mainAgentSystem(goal, m.workDir, mainDir), def)
-	opts := agentcore.Options{
+	ctx = attachSideCapture(ctx, m.prov)
+
+	text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
+		AgentKey:        "mainagent",
+		SessionID:       fmt.Sprintf("mainagent-%d-%d", taskID, mainSeg),
+		TaskID:          taskID,
+		Model:           m.model,
 		Provider:        m.prov,
-		SystemPrompt:    system,
+		SystemPrompts:   system,
 		DynamicBoundary: boundary,
+		NonStreaming:    m.nonStreaming(),
+		Settlement:      wrapupSettlement("mainagent", nil),
+		Compaction:      compactionConfig(m.compactionWindow()),
+		Deferred:        def,
+		Input:           message,
 		Tools:           tools,
-		DeferredTools:   def.Deferred,
-		UnlockSet:       def.Unlock,
-		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true,
-		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
-		EnableWebSearch:       m.webSearch.Enabled,
-		WebSearchBackend:      m.webSearch.Backend,
-		BraveSearchAPIKey:     m.webSearch.BraveKey,
-		TavilySearchAPIKey:    m.webSearch.TavilyKey,
-		DeepSeekSearchBaseURL: m.webSearch.DeepSeekBaseURL,
-		DeepSeekSearchAPIKey:  m.webSearch.DeepSeekAPIKey,
-		DeepSeekSearchModel:   m.webSearch.DeepSeekModel,
-		WebSearchProxy:        m.webSearch.Proxy,
-		WorkingDir:            mainDir, // 本任务工作目录 <workDir>/tasks/<taskID>
-		ToolOutputDir:         cmdOutDir(mainDir),
-		MaxTurns:              m.maxTurns,                             // 0 = unlimited (configurable in agent management)
-		Compaction:            compactionConfig(m.compactionWindow()), // long chats stay within the window
-		Todos:                 actool.NewTodoStore(),                  // 会话级临时待办（TodoWrite），纯规划用，退出即丢
-		// 命中预算(步数)→ SDK 跑收尾:向用户输出一句进展总结。Prompt 与收尾轮数可后台编辑(默认 10 轮)。
-		Settlement:   wrapupSettlement("mainagent", nil),
-		NonStreaming: m.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    m.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
-	}
-	ctx = attachSideCapture(ctx, &opts)
-	s := agentcore.NewSession(opts)
-	defer s.Close()
-	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
-		if emit != nil {
-			r.Worker = "mainagent"
-			emit(r)
-		}
+		MaxTurns:        m.maxTurns,
+		MaxTokens:       m.maxTokens(),
+		ToolOutputLimit: 4000,
+		WorkingDir:      mainDir,
+		Emit: func(r db.Activity) {
+			if emit != nil {
+				r.Worker = "mainagent"
+				emit(r)
+			}
+		},
 	})
 	return text, err
 }

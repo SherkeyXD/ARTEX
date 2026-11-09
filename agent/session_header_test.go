@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Autumn-27/norma/transcript"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // fakeRT records the request it saw and returns a minimal 200 response.
@@ -30,7 +30,7 @@ func newReq(ctx context.Context) *http.Request {
 func TestSessionHeaderInjectedFromContext(t *testing.T) {
 	base := &fakeRT{}
 	rt := quotaAwareTransport{base: base, sessionHeaderKey: "x-session-id"}
-	ctx := transcript.WithSessionID(context.Background(), "conv-42")
+	ctx := llm.WithSessionID(context.Background(), "conv-42")
 	if _, err := rt.RoundTrip(newReq(ctx)); err != nil {
 		t.Fatalf("RoundTrip: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestSessionHeaderInjectedFromContext(t *testing.T) {
 func TestSessionHeaderSkippedWhenKeyEmpty(t *testing.T) {
 	base := &fakeRT{}
 	rt := quotaAwareTransport{base: base} // no key configured
-	ctx := transcript.WithSessionID(context.Background(), "conv-42")
+	ctx := llm.WithSessionID(context.Background(), "conv-42")
 	if _, err := rt.RoundTrip(newReq(ctx)); err != nil {
 		t.Fatalf("RoundTrip: %v", err)
 	}
@@ -56,11 +56,11 @@ func TestSessionHeaderSkippedWhenKeyEmpty(t *testing.T) {
 func TestSessionHeaderSkippedWhenNoSessionID(t *testing.T) {
 	base := &fakeRT{}
 	rt := quotaAwareTransport{base: base, sessionHeaderKey: "x-session-id"}
-	// Context carries no session id (transcript persistence off).
+	// Context carries no session id.
 	if _, err := rt.RoundTrip(newReq(context.Background())); err != nil {
 		t.Fatalf("RoundTrip: %v", err)
 	}
 	if got := base.seen.Header.Get("x-session-id"); got != "" {
-		t.Fatalf("x-session-id = %q, want empty when no session id on context", got)
+		t.Fatalf("unexpected session header %q without session id", got)
 	}
 }

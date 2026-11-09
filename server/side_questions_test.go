@@ -16,9 +16,8 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 )
 
 type sideHTTPProvider struct {
@@ -356,7 +355,7 @@ func TestSideCheckpointPersistsBeforeAdmissionAndRestart(t *testing.T) {
 	f := newSideHTTPFixture(t)
 	p, path := f.conversation(t)
 	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture")
-	ctx, deps := sidequestion.Attach(f.s.ctx, p, harness.QueryDeps{}, bound)
+	ctx, deps := sidequestion.Attach(f.s.ctx, p, sidequestion.QueryDeps{}, bound)
 	mainCtx, stopMain := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -521,7 +520,7 @@ func TestSideRestoredWorkerRuntimePublishesNewCheckpoint(t *testing.T) {
 	p := sidequestion.Parent{TaskID: id, ExplorationID: task.ExpID, IntentID: iid}
 	close(f.provider.release)
 	bound := bindSideProvider(f.provider, f.s.llmCfg, 0, "fixture")
-	ctx, deps := sidequestion.Attach(runtime.ctx, p, harness.QueryDeps{}, bound)
+	ctx, deps := sidequestion.Attach(runtime.ctx, p, sidequestion.QueryDeps{}, bound)
 	_, _, _, err = deps.CallModelSync(ctx, llm.CompletionRequest{Messages: []llm.Message{llm.UserText("after restart context")}})
 	if err != nil {
 		t.Fatal(err)

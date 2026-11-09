@@ -4,15 +4,35 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"strings"
 	"testing"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime/tool"
 )
+
+type captureUsageProvider struct {
+	stream func(context.Context, func(llm.StreamEvent, error) bool)
+}
+
+func (p captureUsageProvider) Stream(ctx context.Context, _ llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
+	return func(yield func(llm.StreamEvent, error) bool) { p.stream(ctx, yield) }
+}
+
+func (p captureUsageProvider) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
+	acc := llm.NewAccumulator()
+	for ev, err := range p.Stream(ctx, req) {
+		if err != nil {
+			return llm.Message{}, "", llm.Usage{}, err
+		}
+		acc.Add(ev)
+	}
+	return acc.Message(), acc.StopReason, acc.Usage, nil
+}
 
 // Real PostgreSQL + SDK hooks: Worker reviews receive the current call only.
 // Intent summaries, inherited background and prior execution are excluded.

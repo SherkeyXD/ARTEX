@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"log"
 
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
@@ -45,4 +45,8 @@ func (m *meteredTool) Call(ctx context.Context, input json.RawMessage, tc *actoo
 		log.Printf("[toolusage] insert %s: %v", m.toolKey, err)
 	}
 	return m.CoreTool.Call(ctx, input, tc)
+}
+
+func (m *meteredTool) Execute(ctx context.Context, input json.RawMessage) (any, error) {
+	return actool.ExecuteCall(ctx, m, input)
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 func callReadJSON(t *testing.T, tool actool.CoreTool, input string) any {

@@ -16,8 +16,7 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // 本文件实现自定义工具执行器(docs/自定义工具设计.md)。system=false 的 tools 行按
@@ -283,10 +282,7 @@ func (s *Server) buildCustomTool(t *db.Tool) actool.CoreTool {
 	}
 	return actool.Build(actool.Spec{
 		Name: key, Description: t.Description, Schema: schema,
-		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
-			return permission.Allowed()
-		},
-		Run: run,
+		Run:  run,
 	})
 }
 

@@ -7,16 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Autumn-27/norma/skill"
-	actool "github.com/Autumn-27/norma/tool"
-
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/runtime/skill"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // maxLedgerSkillName caps the skill name stored for a MISS — that string comes
 // straight from the model and is otherwise unbounded.
 const maxLedgerSkillName = 128
+
+type skillUsageRecorder interface{ InsertSkillUsage(*db.SkillUsage) error }
 
 // meteredSkill wraps the Skill meta-tool to append one skill_usage row per call.
 // The metering lives here rather than in Registry.OnInvoke because OnInvoke only
@@ -25,7 +26,7 @@ const maxLedgerSkillName = 128
 // matter — a miss tells you which procedure the agents wished existed.
 type meteredSkill struct {
 	actool.CoreTool
-	pg       *db.DB
+	pg       skillUsageRecorder
 	reg      *skill.Registry
 	agentKey string
 	ri       agent.RunInfo
@@ -42,6 +43,10 @@ func meterSkillTool(t actool.CoreTool, pg *db.DB, reg *skill.Registry, agentKey 
 func (m *meteredSkill) Call(ctx context.Context, input json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	m.record(input)
 	return m.CoreTool.Call(ctx, input, tc)
+}
+
+func (m *meteredSkill) Execute(ctx context.Context, input json.RawMessage) (any, error) {
+	return actool.ExecuteCall(ctx, m, input)
 }
 
 // record appends the ledger row. Best-effort by design: a metering failure must

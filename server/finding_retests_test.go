@@ -17,8 +17,8 @@ import (
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 type retestProvider struct {

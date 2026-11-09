@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // Member is one LLM profile in the chain, already built into a provider (wrapped
@@ -208,7 +208,7 @@ func rotateGroups(in []*Member, n uint64) []*Member {
 }
 
 // statusRe pulls the HTTP status out of the SDK's error text, which is formatted
-// as "<prefix>: status <code>: <body>" (norma/llm/retry.go). The SDK exposes no
+// as "<prefix>: status <code>: <body>" (llm/retry.go). The SDK exposes no
 // typed error, so the string is what we have.
 var statusRe = regexp.MustCompile(`status (\d{3})`)
 

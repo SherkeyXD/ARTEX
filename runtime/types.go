@@ -47,6 +47,7 @@ type Part struct {
 	Type       PartType        `json:"type"`
 	Text       string          `json:"text,omitempty"`
 	Thinking   string          `json:"thinking,omitempty"`
+	Signature  string          `json:"signature,omitempty"`
 	ToolCall   *ToolCallData   `json:"tool_call,omitempty"`
 	ToolResult *ToolResultData `json:"tool_result,omitempty"`
 }
@@ -188,16 +189,33 @@ func (u TokenUsage) Total() int {
 	return u.InputTokens + u.OutputTokens
 }
 
+// TerminalReason identifies the high-level cause of agent completion.
+type TerminalReason string
+
+const (
+	ReasonCompleted         TerminalReason = "completed"
+	ReasonMaxTurns          TerminalReason = "max_turns"
+	ReasonTimeout           TerminalReason = "timeout"
+	ReasonModelError        TerminalReason = "model_error"
+	ReasonBlockingLimit     TerminalReason = "blocking_limit"
+	ReasonPromptTooLong     TerminalReason = "prompt_too_long"
+	ReasonImageError        TerminalReason = "image_error"
+	ReasonStopHookPrevented TerminalReason = "stop_hook_prevented"
+	ReasonHookStopped       TerminalReason = "hook_stopped"
+	ReasonAbortedStreaming  TerminalReason = "aborted_streaming"
+	ReasonAbortedTools      TerminalReason = "aborted_tools"
+)
+
 // StopReason describes why a turn or loop finished.
 type StopReason string
 
 const (
-	StopReasonComplete   StopReason = "complete"
-	StopReasonMaxSteps   StopReason = "max_steps"
-	StopReasonCancelled  StopReason = "cancelled"
-	StopReasonToolError  StopReason = "tool_error"
+	StopReasonComplete    StopReason = "complete"
+	StopReasonMaxSteps    StopReason = "max_steps"
+	StopReasonCancelled   StopReason = "cancelled"
+	StopReasonToolError   StopReason = "tool_error"
 	StopReasonInterrupted StopReason = "interrupted"
-	StopReasonError      StopReason = "error"
+	StopReasonError       StopReason = "error"
 )
 
 // TurnResult represents the output of a single Agent turn execution.
@@ -210,5 +228,7 @@ type TurnResult struct {
 	Duration     time.Duration     `json:"duration"`
 	TTFT         time.Duration     `json:"ttft"`
 	StopReason   StopReason        `json:"stop_reason"`
+	Reason       TerminalReason    `json:"reason,omitempty"`
+	Iterations   int               `json:"iterations"`
 	Error        error             `json:"error,omitempty"`
 }

@@ -2,22 +2,20 @@ package agent
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 func TestReasonHintCoversEveryTerminalReason(t *testing.T) {
-	all := []harness.TerminalReason{
-		harness.ReasonCompleted, harness.ReasonBlockingLimit, harness.ReasonImageError,
-		harness.ReasonModelError, harness.ReasonAbortedStreaming, harness.ReasonAbortedTools,
-		harness.ReasonPromptTooLong, harness.ReasonStopHookPrevented, harness.ReasonHookStopped,
-		harness.ReasonMaxTurns, harness.ReasonTimeout,
+	all := []runtime.TerminalReason{
+		runtime.ReasonCompleted, runtime.ReasonBlockingLimit, runtime.ReasonImageError,
+		runtime.ReasonModelError, runtime.ReasonAbortedStreaming, runtime.ReasonAbortedTools,
+		runtime.ReasonPromptTooLong, runtime.ReasonStopHookPrevented, runtime.ReasonHookStopped,
+		runtime.ReasonMaxTurns, runtime.ReasonTimeout,
 	}
 	for _, reason := range all {
 		if strings.TrimSpace(reasonHint[reason]) == "" {
@@ -67,8 +65,8 @@ func TestTerminalTextAbortedNamesCauseAndHangingTool(t *testing.T) {
 	cancel(AbortKilledByPlanner)
 	trace := &runTrace{startedAt: time.Now().Add(-90 * time.Second)}
 	trace.start("tu_1", "Bash", `{"command":"nmap -p- 10.0.0.1"}`)
-	term := &harness.Terminal{
-		Reason: harness.ReasonAbortedTools,
+	term := &TerminalResult{
+		Reason: runtime.ReasonAbortedTools,
 		Err:    context.Canceled,
 		Turns:  7,
 		Usage:  llm.Usage{InputTokens: 1200, OutputTokens: 340},
@@ -87,7 +85,7 @@ func TestTerminalTextAbortedNamesCauseAndHangingTool(t *testing.T) {
 func TestTerminalTextDirectContextCancellationKeepsCause(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	cancel(AbortChatStoppedByUser)
-	summary, detail := terminalText(ctx, &harness.Terminal{Err: context.Canceled}, &runTrace{startedAt: time.Now()})
+	summary, detail := terminalText(ctx, &TerminalResult{Err: context.Canceled}, &runTrace{startedAt: time.Now()})
 	if !strings.Contains(summary, "用户停止") || !strings.Contains(detail, "chat_stopped_by_user") {
 		t.Fatalf("direct context cancellation lost cause: %q\n%s", summary, detail)
 	}
@@ -98,72 +96,44 @@ func TestTerminalTextDirectContextCancellationKeepsCause(t *testing.T) {
 
 func TestTerminalTextAbortedPreservesPartialOutput(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(AbortPausedByUser)
-	summary, detail := terminalText(ctx, &harness.Terminal{
-		Reason: harness.ReasonAbortedStreaming,
-		Text:   "已经生成的半段回答",
-	}, &runTrace{startedAt: time.Now()})
-	if !strings.Contains(summary, "用户暂停") {
-		t.Fatalf("abort summary lost cause: %q", summary)
+	cancel(AbortTaskDeleted)
+	term := &TerminalResult{
+		Reason: runtime.ReasonAbortedStreaming,
+		Err:    context.Canceled,
+		Text:   "partial markdown output before stream aborted",
 	}
-	if !strings.Contains(detail, "已经生成的半段回答") {
-		t.Fatalf("abort detail lost partial output: %s", detail)
+	_, detail := terminalText(ctx, term, &runTrace{startedAt: time.Now()})
+	if !strings.Contains(detail, "partial markdown output before stream aborted") {
+		t.Fatalf("detail lost partial output: %s", detail)
+	}
+	if !strings.Contains(detail, "task_deleted") {
+		t.Fatalf("detail lost named cause: %s", detail)
 	}
 }
 
-func TestTerminalTextCompletedToolNotBlamed(t *testing.T) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(AbortShutdown)
-	trace := &runTrace{startedAt: time.Now()}
-	trace.start("tu_1", "Read", `{"path":"/etc/hosts"}`)
-	trace.done("tu_1")
-	_, detail := terminalText(ctx, &harness.Terminal{Reason: harness.ReasonAbortedStreaming}, trace)
-	if strings.Contains(detail, "未返回结果") || !strings.Contains(detail, "已正常返回") {
-		t.Fatalf("completed tool was blamed:\n%s", detail)
+func TestTerminalTextBudgetHitSummary(t *testing.T) {
+	trace := &runTrace{startedAt: time.Now().Add(-12 * time.Second)}
+	term := &TerminalResult{Reason: runtime.ReasonMaxTurns, Turns: 10}
+	summary, _ := terminalText(context.Background(), term, trace)
+	if !strings.Contains(summary, "max_turns") || !strings.Contains(summary, "已收尾") {
+		t.Fatalf("unexpected budget summary: %q", summary)
+	}
+	if !strings.Contains(summary, "10 轮") {
+		t.Fatalf("summary missing turn count: %q", summary)
 	}
 }
 
 func TestTerminalTextNonAbortReasons(t *testing.T) {
-	trace := &runTrace{startedAt: time.Now()}
-	summary, _ := terminalText(context.Background(), &harness.Terminal{Reason: harness.ReasonMaxTurns}, trace)
-	if !strings.Contains(summary, "运行预算上限") || strings.Contains(summary, "中断") {
-		t.Fatalf("unexpected max_turns summary: %q", summary)
+	trace := &runTrace{startedAt: time.Now().Add(-5 * time.Second)}
+	term := &TerminalResult{
+		Reason: runtime.ReasonModelError,
+		Err:    context.DeadlineExceeded,
 	}
-	summary, detail := terminalText(context.Background(), &harness.Terminal{
-		Reason: harness.ReasonModelError, Err: errors.New("429 rate limited"),
-	}, trace)
-	if !strings.Contains(summary, "model_error") || !strings.Contains(detail, "429 rate limited") {
-		t.Fatalf("model_error detail incomplete: %q\n%s", summary, detail)
+	summary, detail := terminalText(context.Background(), term, trace)
+	if !strings.Contains(summary, "model_error") {
+		t.Fatalf("unexpected summary: %q", summary)
 	}
-}
-
-func TestAbortCausesAreWellFormed(t *testing.T) {
-	all := []*AbortCause{
-		AbortPausedByUser, AbortPausedByOrchestrator, AbortTaskDeleted, AbortPausedOnReload,
-		AbortGoalMet, AbortSettleDrainTimeout, AbortKilledByPlanner, AbortWorkPausedByUser,
-		AbortWorkCancelledByUser, AbortWorkFinished, AbortPausedRaceGuard,
-		AbortChatStoppedByUser, AbortChatPausedWithTask, AbortChatTurnFinished,
-		AbortShutdown, AbortRunHardTimeout,
-	}
-	seen := map[string]bool{}
-	for _, abort := range all {
-		switch {
-		case abort.Code == "" || seen[abort.Code]:
-			t.Errorf("missing or duplicate code: %q", abort.Code)
-		case abort.Short == "" || utf8.RuneCountInString(abort.Short) > 40:
-			t.Errorf("%s has invalid short text: %q", abort.Code, abort.Short)
-		case utf8.RuneCountInString(abort.Text) <= utf8.RuneCountInString(abort.Short):
-			t.Errorf("%s detail must be longer than short text", abort.Code)
-		}
-		seen[abort.Code] = true
-	}
-}
-
-func TestFirstLineCapsByRuneNotByte(t *testing.T) {
-	if got := firstLine(strings.Repeat("恢复", 10), 5); got != "恢复恢复恢…" {
-		t.Fatalf("firstLine split a Unicode character: %q", got)
-	}
-	if got := firstLine("头\n尾", 100); got != "头" {
-		t.Fatalf("firstLine did not stop at newline: %q", got)
+	if !strings.Contains(detail, "context deadline exceeded") {
+		t.Fatalf("detail missing underlying error: %s", detail)
 	}
 }

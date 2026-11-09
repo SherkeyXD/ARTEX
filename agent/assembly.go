@@ -7,7 +7,7 @@ import (
 	"log"
 	"runtime/debug"
 
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // DeferredInfo carries the deferred-tools wiring an agent needs to build its
@@ -74,6 +74,10 @@ func AugmentTools(ctx context.Context, agentKey string, base []actool.CoreTool) 
 func guardPanic(t actool.CoreTool) actool.CoreTool { return &guardedTool{CoreTool: t} }
 
 type guardedTool struct{ actool.CoreTool }
+
+func (g *guardedTool) Execute(ctx context.Context, input json.RawMessage) (any, error) {
+	return actool.ExecuteCall(ctx, g, input)
+}
 
 func (g *guardedTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (res actool.Result, err error) {
 	defer func() {

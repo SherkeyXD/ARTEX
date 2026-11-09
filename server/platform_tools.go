@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // 平台操作工具(给内置 Auto agent 用):建/改 skill、自定义工具、MCP。都是 host 工具,

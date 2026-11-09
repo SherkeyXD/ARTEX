@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/llmpool"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 )
 
 type fakeProvider struct {
@@ -44,7 +43,7 @@ func TestCheckpointDeepCopyAndBoundaries(t *testing.T) {
 	p := Bind(fakeProvider{complete: func(context.Context, llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
 		return assistant("finished"), "end_turn", llm.Usage{}, nil
 	}}, Model{Model: "actual"})
-	ctx, deps := Attach(WithPublisher(t.Context(), func(s Snapshot) { snapshots = append(snapshots, s) }), Parent{ConversationID: 1}, harness.QueryDeps{}, p)
+	ctx, deps := Attach(WithPublisher(t.Context(), func(s Snapshot) { snapshots = append(snapshots, s) }), Parent{ConversationID: 1}, QueryDeps{}, p)
 	req := fixture()
 	if _, _, _, err := deps.CallModelSync(ctx, req); err != nil {
 		t.Fatal(err)
@@ -103,7 +102,7 @@ func TestSnapshotExcludesPartialStreamAndSelectsPoolMember(t *testing.T) {
 		}
 	}}, Model{Model: "selected"})
 	pool := llmpool.New([]*llmpool.Member{{ID: 1, Name: "failed", Rank: 2, Prov: failed}, {ID: 2, Name: "selected", Rank: 1, Prov: good}}, nil)
-	ctx, deps := Attach(WithPublisher(t.Context(), func(s Snapshot) { snapshots = append(snapshots, s) }), Parent{ConversationID: 2}, harness.QueryDeps{}, pool)
+	ctx, deps := Attach(WithPublisher(t.Context(), func(s Snapshot) { snapshots = append(snapshots, s) }), Parent{ConversationID: 2}, QueryDeps{}, pool)
 	for ev, err := range deps.CallModel(ctx, fixture()) {
 		if err != nil {
 			t.Fatal(err)
@@ -216,7 +215,7 @@ func TestMainSideConcurrencyAndIndependentCancellation(t *testing.T) {
 			defer stopSide()
 			var mu sync.Mutex
 			bound := Bind(p, Model{Model: "blocking"})
-			mainCtx, deps := Attach(WithPublisher(mainCtx, func(Snapshot) { mu.Lock(); mu.Unlock() }), Parent{ConversationID: 3}, harness.QueryDeps{}, bound)
+			mainCtx, deps := Attach(WithPublisher(mainCtx, func(Snapshot) { mu.Lock(); mu.Unlock() }), Parent{ConversationID: 3}, QueryDeps{}, bound)
 			mainDone, sideDone := make(chan struct{}), make(chan Answer, 1)
 			go func() {
 				defer close(mainDone)

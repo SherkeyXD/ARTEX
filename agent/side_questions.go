@@ -5,11 +5,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/Autumn-27/norma/agentcore"
 )
 
-func attachSideCapture(ctx context.Context, opts *agentcore.Options) context.Context {
+func attachSideCapture(ctx context.Context, prov llm.Provider) context.Context {
 	ri := RunInfoFrom(ctx)
 	p := sidequestion.Parent{TaskID: ri.TaskID, ExplorationID: ri.ExplorationID, IntentID: ri.IntentID}
 	if strings.HasPrefix(ri.SessionID, "conv-") {
@@ -18,6 +18,6 @@ func attachSideCapture(ctx context.Context, opts *agentcore.Options) context.Con
 	if p.ConversationID == 0 && (p.TaskID == 0 || p.ExplorationID == 0) {
 		return ctx
 	}
-	ctx, opts.Deps = sidequestion.Attach(ctx, p, opts.Deps, opts.Provider)
+	ctx, _ = sidequestion.Attach(ctx, p, sidequestion.QueryDeps{}, prov)
 	return ctx
 }

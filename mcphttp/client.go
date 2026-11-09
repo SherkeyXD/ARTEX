@@ -23,9 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 const protocolVersion = "2025-06-18"
@@ -289,9 +287,6 @@ func (c *Client) wrap(rt remoteTool) actool.CoreTool {
 		Name:        full,
 		Description: rt.Description,
 		Schema:      schema,
-		Permissions: func(context.Context, json.RawMessage, permission.Context) permission.Decision {
-			return permission.AskUser("call MCP tool " + full + "?")
-		},
 		Run: func(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 			var args any
 			if len(in) > 0 {
@@ -318,7 +313,9 @@ func (c *Client) wrap(rt remoteTool) actool.CoreTool {
 			// 与内置/自定义工具一致：超长输出走 Capture——按会话 MaxOutputChars（默认
 			// 30000）截断，配了 ToolOutputDir 时全量溢写到磁盘只留 head + 指针，避免大
 			// MCP 结果整段灌爆上下文。
-			return actool.Result{Content: []llm.ContentBlock{llm.TextBlock(actool.Capture(tc, text))}, IsError: res.IsError}, nil
+			r := actool.Text(actool.Capture(tc, text))
+			r.IsError = res.IsError
+			return r, nil
 		},
 	})
 }

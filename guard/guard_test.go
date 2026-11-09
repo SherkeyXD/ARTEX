@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-
-	"github.com/Autumn-27/norma/hook"
 )
 
 // A guard with no interceptor no longer hard-blocks anything: destructive/exfil
@@ -35,5 +33,3 @@ func TestPreToolUsePassthrough(t *testing.T) {
 		t.Error("audit should record gated calls")
 	}
 }
-
-var _ = hook.PreToolUse

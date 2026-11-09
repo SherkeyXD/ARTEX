@@ -13,8 +13,8 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 type scriptedLLMProvider struct {
@@ -433,7 +433,7 @@ func TestTaskLLMStreamMarkFailureAfterToolStartSkipsWorkerReplay(t *testing.T) {
 	if !isTaskLLMRuntimeError(err) {
 		t.Fatalf("committed mark failure must be router-classified: %T %v", err, err)
 	}
-	if retryableWorkerModelError(harness.ReasonModelError, err) {
+	if retryableWorkerModelError(runtime.ReasonModelError, err) {
 		t.Fatal("worker must not replay after a committed tool stream when quota persistence fails")
 	}
 	if provider.calls != 1 {
@@ -447,10 +447,10 @@ func TestTaskLLMRuntimeErrorSkipsWorkerReplay(t *testing.T) {
 		chainExhausted: false,
 		cause:          errors.New("insufficient_quota after partial output"),
 	}
-	if retryableWorkerModelError(harness.ReasonModelError, partialStreamErr) {
+	if retryableWorkerModelError(runtime.ReasonModelError, partialStreamErr) {
 		t.Fatal("worker must not replay an intent after the task router handled a mid-stream quota error")
 	}
-	if !retryableWorkerModelError(harness.ReasonModelError, errors.New("temporary network error")) {
+	if !retryableWorkerModelError(runtime.ReasonModelError, errors.New("temporary network error")) {
 		t.Fatal("ordinary model errors should retain the existing worker retry behavior")
 	}
 }

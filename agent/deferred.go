@@ -3,8 +3,8 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/Autumn-27/norma/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // deferredSystem builds an agent's system-prompt segments and cache boundary from
@@ -35,9 +35,17 @@ func seedUnlockFromHistory(msgs []llm.Message, unlockSkill func(string)) {
 	if unlockSkill == nil {
 		return
 	}
+	success := make(map[string]bool)
+	for _, message := range msgs {
+		for _, block := range message.Content {
+			if block.Type == llm.BlockToolResult && !block.IsError {
+				success[block.ToolUseID] = true
+			}
+		}
+	}
 	for _, m := range msgs {
 		for _, b := range m.ToolUses() {
-			if b.Name != "Skill" {
+			if b.Name != "Skill" || !success[b.ID] {
 				continue
 			}
 			var in struct {

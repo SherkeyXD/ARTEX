@@ -9,10 +9,8 @@ import (
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // ChatAgent is the generic, task-independent conversational runner behind the chat
@@ -105,55 +103,43 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 	// visible skills/MCP and lets the DB tools table filter/override. DefaultTools
 	// have no tools-table rows, so they always pass through.
 	base := actool.DefaultTools()
+	var err error
+	base, err = addNetworkTools(base, ws)
+	if err != nil {
+		return "", err
+	}
 	ctx = WithRunInfo(ctx, RunInfo{SessionID: sessionID})
 	tools, def, cleanup := AugmentTools(ctx, agentKey, base)
 	defer cleanup()
 
 	system, boundary := deferredSystem(chatSystem(agentKey, c.workDir, sessionWorkDir), def)
-	opts := agentcore.Options{
+	ctx = attachSideCapture(ctx, c.prov)
+
+	text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
+		AgentKey:        agentKey,
+		SessionID:       sessionID,
+		Model:           c.model,
 		Provider:        c.prov,
-		SystemPrompt:    system,
+		SystemPrompts:   system,
 		DynamicBoundary: boundary,
+		NonStreaming:    c.nonStreaming(),
+		MaxDuration:     maxDuration,
+		Settlement:      wrapupSettlement(agentKey, nil),
+		Compaction:      compactionConfig(c.window),
+		Deferred:        def,
+		Input:           message,
 		Tools:           tools,
-		DeferredTools:   def.Deferred,
-		UnlockSet:       def.Unlock,
-		PermissionMode:  permission.ModeBypass,
-		EnableWebFetch:  true,
-		// 联网搜索(可选)。ddgs 无需 key；brave-free 需 BraveKey；tavily 需 TavilyKey。
-		// WebSearchProxy 是独立出口代理(http/https/socks5)，与记录流量的 MITM 代理无关；空则直连。
-		EnableWebSearch:       ws.Enabled,
-		WebSearchBackend:      ws.Backend,
-		BraveSearchAPIKey:     ws.BraveKey,
-		TavilySearchAPIKey:    ws.TavilyKey,
-		DeepSeekSearchBaseURL: ws.DeepSeekBaseURL,
-		DeepSeekSearchAPIKey:  ws.DeepSeekAPIKey,
-		DeepSeekSearchModel:   ws.DeepSeekModel,
-		WebSearchProxy:        ws.Proxy,
-		WorkingDir:            sessionWorkDir,
-		MaxTurns:              maxTurns,
-		MaxDuration:           maxDuration,
-		Compaction:            compactionConfig(c.window),
-		Todos:                 actool.NewTodoStore(),
-		// large tool output spills to cmd-output/ under the session dir.
-		// 截断上限用 SDK 默认(tool.Capture 的 30000 字符)。
-		ToolOutputDir: filepath.Join(sessionWorkDir, "cmd-output"),
-		// 命中预算(步数)→ SDK 跑收尾:输出一句总结。Prompt 与收尾轮数按本 agent key 后台可编辑
-		// (自定义 agent 各自一份;留空/0 用通用默认:10 轮)。
-		Settlement:   wrapupSettlement(agentKey, nil),
-		NonStreaming: c.nonStreaming(), // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    c.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
-	}
-	if c.guard != nil {
-		opts.Hooks = c.guard.Hooks()
-	}
-	ctx = attachSideCapture(ctx, &opts)
-	s := agentcore.NewSession(opts)
-	defer s.Close()
-	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {
-		if emit != nil {
-			r.Worker = agentKey
-			emit(r)
-		}
+		MaxTurns:        maxTurns,
+		MaxTokens:       c.maxTokens(),
+		ToolOutputLimit: 4000,
+		WorkingDir:      sessionWorkDir,
+		Guard:           c.guard,
+		Emit: func(r db.Activity) {
+			if emit != nil {
+				r.Worker = agentKey
+				emit(r)
+			}
+		},
 	})
 	return text, err
 }

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Autumn-27/norma/llm"
-	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 func TestDeferredSystem_NoGlobal(t *testing.T) {
@@ -52,7 +52,7 @@ func TestDeferredSystem_GatedNotInBlock(t *testing.T) {
 
 func TestSeedUnlockFromHistory(t *testing.T) {
 	skillCall := func(name string) llm.ContentBlock {
-		return llm.ContentBlock{Type: llm.BlockToolUse, Name: "Skill", Input: json.RawMessage(`{"name":"` + name + `"}`)}
+		return llm.ContentBlock{Type: llm.BlockToolUse, ID: name, Name: "Skill", Input: json.RawMessage(`{"name":"` + name + `"}`)}
 	}
 	msgs := []llm.Message{
 		{Role: llm.RoleAssistant, Content: []llm.ContentBlock{skillCall("browsing")}},
@@ -61,6 +61,7 @@ func TestSeedUnlockFromHistory(t *testing.T) {
 			skillCall("recon"),
 		}},
 	}
+	msgs = append(msgs, llm.Message{Role: llm.RoleUser, Content: []llm.ContentBlock{llm.ToolResultText("browsing", "loaded", false), llm.ToolResultText("recon", "loaded", false)}})
 	var got []string
 	seedUnlockFromHistory(msgs, func(name string) { got = append(got, name) })
 	if strings.Join(got, ",") != "browsing,recon" {

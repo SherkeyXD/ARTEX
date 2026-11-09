@@ -16,6 +16,15 @@ type Tool interface {
 	Execute(ctx context.Context, rawArgs json.RawMessage) (any, error)
 }
 
+// SchemaVisibility withholds deferred schemas while retaining a guarded call path.
+type SchemaVisibility interface{ SchemaVisible() bool }
+
+// ToolCallExpander maps a dispatch-tool call to its actual target before approval.
+type ToolCallExpander interface{ ExpandCall(*ToolCallData) error }
+
+// UniversalTool is an alias for Tool.
+type UniversalTool = Tool
+
 // ToolFunc is a signature for functional tool execution.
 type ToolFunc func(ctx context.Context, rawArgs json.RawMessage) (any, error)
 
@@ -27,9 +36,9 @@ type BaseTool struct {
 	Handler         ToolFunc        `json:"-"`
 }
 
-func (b *BaseTool) Name() string                        { return b.ToolName }
-func (b *BaseTool) Description() string                 { return b.ToolDescription }
-func (b *BaseTool) ParametersSchema() json.RawMessage   { return b.Schema }
+func (b *BaseTool) Name() string                      { return b.ToolName }
+func (b *BaseTool) Description() string               { return b.ToolDescription }
+func (b *BaseTool) ParametersSchema() json.RawMessage { return b.Schema }
 func (b *BaseTool) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
 	if b.Handler == nil {
 		return nil, fmt.Errorf("tool %q has no execution handler", b.ToolName)

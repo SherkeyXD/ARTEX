@@ -4,21 +4,40 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 // TurnOptions configures a single turn execution.
 type TurnOptions struct {
-	ModelProfile     string
-	ModelName        string
-	SystemPrompt     string
-	Temperature      float64
-	MaxTokens        int
-	MaxIterations    int // Max tool calling loops inside a single turn (default: 15)
-	ToolOutputLimit  int // Max chars of tool output before truncation (default: 4000)
-	ReasoningEffort  string
-	ThinkingType     string
-	Tools            []Tool
-	Provider         LLMProvider
+	ModelProfile    string
+	ModelName       string
+	SystemPrompt    string
+	SystemPrompts   []string
+	DynamicBoundary int
+	NonStreaming    bool
+	WorkingDir      string
+	ToolOutputDir   string
+	MaxDuration     time.Duration
+	Settlement      *Settlement
+	Compaction      *CompactionConfig
+	Temperature     float64
+	MaxTokens       int
+	MaxIterations   int // Maximum model calls; 0 means unlimited.
+	ToolOutputLimit int // Max chars of tool output before truncation (default: 4000)
+	ReasoningEffort string
+	ThinkingType    string
+	Tools           []Tool
+	Provider        LLMProvider
+}
+
+// Settlement gives a budget-exhausted run a separate, bounded write-back phase.
+// The caller's cancellation still interrupts this phase.
+type Settlement struct {
+	Prompt         string
+	PromptByReason map[TerminalReason]string
+	DisabledTools  []string
+	MaxTurns       int
+	MaxDuration    time.Duration
 }
 
 // HarnessDriver defines the SPI for an underlying agent execution engine.
