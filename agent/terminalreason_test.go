@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 )
 
 func TestReasonHintCoversEveryTerminalReason(t *testing.T) {
@@ -71,7 +71,7 @@ func TestTerminalTextAbortedNamesCauseAndHangingTool(t *testing.T) {
 		Reason: harness.ReasonAbortedTools,
 		Err:    context.Canceled,
 		Turns:  7,
-		Usage:  llm.Usage{InputTokens: 1200, OutputTokens: 340},
+		Usage:  toNormaUsage(llm.Usage{InputTokens: 1200, OutputTokens: 340}),
 	}
 	summary, detail := terminalText(ctx, term, trace)
 	if !strings.Contains(summary, "规划者") || strings.Contains(summary, "\n") {

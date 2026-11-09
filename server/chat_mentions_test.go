@@ -15,7 +15,7 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 func TestChatMentionParsing(t *testing.T) {

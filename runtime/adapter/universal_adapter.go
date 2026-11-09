@@ -9,7 +9,7 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -73,7 +73,7 @@ func (a *UniversalToolAdapter) Execute(ctx context.Context, rawArgs json.RawMess
 
 	var sb strings.Builder
 	for _, cb := range res.Content {
-		if cb.Type == llm.BlockText {
+		if string(cb.Type) == string(llm.BlockText) {
 			sb.WriteString(cb.Text)
 		}
 	}

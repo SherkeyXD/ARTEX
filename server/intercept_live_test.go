@@ -11,7 +11,7 @@ import (
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // Opt-in model regression: sends synthetic review inputs only, never executes

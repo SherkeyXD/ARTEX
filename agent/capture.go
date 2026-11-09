@@ -9,10 +9,10 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 )
 
 // captureRun drives one agent turn-to-completion over Session.Prompt and emits a
@@ -36,7 +36,7 @@ func captureRun(ctx context.Context, opts agentcore.Options, input string, emit 
 // multiple prompts on the SAME conversation (e.g. a settlement round that reuses
 // the worker's accumulated context after the main run hit max_turns).
 func captureRunSession(ctx context.Context, s *agentcore.Session, input string, emit func(db.Activity)) (string, harness.TerminalReason, error) {
-	ctx, auditTrace := intercept.WithTrace(ctx, input, approvalHistory(s.Messages()))
+	ctx, auditTrace := intercept.WithTrace(ctx, input, approvalHistory(toNativeMessages(s.Messages())))
 	defer auditTrace.Finish()
 	var reason harness.TerminalReason
 	rec := func(r db.Activity) {
@@ -139,7 +139,7 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 				continue
 			}
 			flush()
-			out := blocksText(ev.ToolResult.Content)
+			out := blocksText(toNativeBlocks(ev.ToolResult.Content))
 			lastTool.done(ev.ToolResult.ToolUseID)
 			auditTrace.Complete(ev.ToolResult.ToolUseID, out, ev.ToolResult.IsError)
 			toolDur := int64(0)
@@ -162,7 +162,7 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 			// one for a running session's live token count. Don't flush() here — the
 			// buffered final-answer text must stay for the KindResult de-dup.
 			if ev.Usage != nil {
-				u := *ev.Usage
+				u := toNativeUsage(*ev.Usage)
 				lastUsage = &u
 				rec(db.Activity{Kind: "usage",
 					InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens,
@@ -171,7 +171,7 @@ func captureRunSession(ctx context.Context, s *agentcore.Session, input string, 
 		case harness.KindResult:
 			if ev.Terminal != nil {
 				if ev.Terminal.Reason != harness.ReasonAbortedStreaming {
-					sidequestion.Finish(ctx, ev.Terminal.Messages)
+					sidequestion.Finish(ctx, toNativeMessages(ev.Terminal.Messages))
 				}
 				finalText = ev.Terminal.Text
 				reason = ev.Terminal.Reason

@@ -7,8 +7,6 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/sidequestion"
 	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 )
 
 func attachSideCapture(ctx context.Context, opts *agentcore.Options) context.Context {
@@ -20,15 +18,13 @@ func attachSideCapture(ctx context.Context, opts *agentcore.Options) context.Con
 	if p.ConversationID == 0 && (p.TaskID == 0 || p.ExplorationID == 0) {
 		return ctx
 	}
-	var prov llm.Provider
-	var deps harness.QueryDeps
-	if opts != nil {
-		prov = opts.Provider
-		deps = opts.Deps
+	if opts == nil {
+		ctx, _ = sidequestion.Attach(ctx, p, sidequestion.QueryDeps{}, nil)
+		return ctx
 	}
-	ctx, newDeps := sidequestion.Attach(ctx, p, deps, prov)
-	if opts != nil {
-		opts.Deps = newDeps
-	}
+	nativeProv := toNativeProvider(opts.Provider)
+	nativeDeps := toNativeQueryDeps(opts.Deps)
+	ctx, newDeps := sidequestion.Attach(ctx, p, nativeDeps, nativeProv)
+	opts.Deps = toNormaQueryDeps(newDeps)
 	return ctx
 }

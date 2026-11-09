@@ -10,7 +10,7 @@ import (
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/tool"
 )
 
@@ -93,7 +93,7 @@ func TestWorkerReviewContextAcrossToolCalls(t *testing.T) {
 	}
 	rawIntent, _ := json.Marshal(intentPayload)
 	worker := NewWorker(provider, "test-model", workDir, 0, 3, probe)
-	_, _, err = worker.Execute(ctx, "test-agent", expID, nil, ts, &db.Node{ID: intentID, Payload: rawIntent}, AdaptGuardHooks(guard.NewWithInterceptor(ic).Hooks()), nil, nil)
+	_, _, err = worker.Execute(ctx, "test-agent", expID, nil, ts, &db.Node{ID: intentID, Payload: rawIntent}, guard.NewWithInterceptor(ic).Hooks(), nil, nil)
 	runDir := ensureRunDir(workDir, expID, intentID)
 	if err != nil {
 		t.Fatal(err)

@@ -17,9 +17,8 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/transcript"
 )
 
 type sideRun struct {
@@ -427,7 +426,7 @@ func (s *Server) runSide(ctx context.Context, cancel context.CancelFunc, e sideq
 		delete(s.side.runs, e.ID)
 		s.side.mu.Unlock()
 	}()
-	ctx = transcript.WithSessionID(ctx, fmt.Sprintf("exp%d-btw-%s", parent.ExplorationID, e.ID))
+	ctx = llm.WithSessionID(ctx, fmt.Sprintf("exp%d-btw-%s", parent.ExplorationID, e.ID))
 	// Deletions can race between request insertion and registration. Observe the
 	// persisted lifecycle even while a provider is blocked without emitting text.
 	go func() {

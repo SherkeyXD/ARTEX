@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/llm"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 	"github.com/Autumn-27/norma/transcript"
@@ -118,7 +118,9 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 	// 显式挂一个稳定 id：同一探索的拆解请求共享它（利于命中缓存），且命名与
 	// planner/worker 不冲突。
 	if ts != nil {
-		ctx = transcript.WithSessionID(ctx, fmt.Sprintf("exp%d-goals", ts.ID()))
+		sid := fmt.Sprintf("exp%d-goals", ts.ID())
+		ctx = llm.WithSessionID(ctx, sid)
+		ctx = transcript.WithSessionID(ctx, sid)
 	}
 	// worker="goals" tags the goal nodes' provenance; ts/taskID let set_goals link
 	// each goal under the task root. This is the catalog's real set_goals tool, so a
@@ -167,7 +169,7 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 		})
 	} else {
 		captureRun(ctx, agentcore.Options{
-			Provider:               prov,
+			Provider:               toNormaProvider(prov),
 			SystemPrompt:           []string{sys},
 			Tools:                  tools,
 			PermissionMode:         acperm.ModeBypass,

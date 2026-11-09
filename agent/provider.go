@@ -19,11 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/compaction"
-	"github.com/Autumn-27/norma/llm"
-	acperm "github.com/Autumn-27/norma/permission"
 	"github.com/Autumn-27/norma/transcript"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // Config describes the LLM backend resolved from the environment.
@@ -339,7 +337,11 @@ func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error
 	// Stable across a session's turns and distinct across sessions — exactly what
 	// a session-keyed prompt cache wants. Skipped when no session id is present.
 	if t.sessionHeaderKey != "" {
-		if sid := transcript.SessionIDFrom(req.Context()); sid != "" {
+		sid, _ := llm.SessionIDFrom(req.Context())
+		if sid == "" {
+			sid = transcript.SessionIDFrom(req.Context())
+		}
+		if sid != "" {
 			req.Header.Set(t.sessionHeaderKey, sid)
 		}
 	}
@@ -422,29 +424,22 @@ func TestConnection(ctx context.Context, c Config) (time.Duration, string, error
 	// x-opencode-session 头,缺了直接 400 MissingSessionID),这会导致"对话正常、
 	// 点击测试却 400"的落差。这里补挂一个一次性随机 session id,让测试与真实对话走同
 	// 一套发头逻辑;未配 SessionHeaderKey 的端点不读它,无副作用。
-	ctx = transcript.WithSessionID(ctx, "conntest-"+transcript.NewSessionID())
+	ctx = llm.WithSessionID(ctx, "conntest-"+llm.NewSessionID())
 	start := time.Now()
-	// MaxTokens 要给足：推理模型(如 deepseek-v4-pro)在给出答案前会先产出一大段
-	// 思考(实测对一句 "ping" 也能烧 ~2900 token)。若只给 32,模型会一直卡在"思考阶段"
-	// 就撞到输出上限(finish=length)、被截断,连接测试虽仍算通(err=nil)但显示成
-	// "已中断/length/resume" 一团糟。给足预算让它把 OK 干净吐完(finish=stop)。
-	// EscalateMaxTokens 保持 false:不因截断而抬额重试,避免 resume 循环空烧。
-	reply, err := agentcore.Run(ctx, agentcore.Options{
-		Provider:       prov,
-		SystemPrompt:   []string{"你是连接测试。直接输出两个字符 OK 即可，不要思考、不要解释、不要别的。"},
-		PermissionMode: acperm.ModeBypass,
-		MaxTurns:       1,
-		MaxTokens:      8192,
-		NonStreaming:   !c.Stream, // 用该 profile 的真实收发模式做连接测试
-	}, "ping")
-	lat := time.Since(start)
-	if err != nil {
-		return lat, "", err
+	req := llm.CompletionRequest{
+		System:    []string{"你是连接测试。直接输出两个字符 OK 即可，不要思考、不要解释、不要别的。"},
+		Messages:  []llm.Message{llm.UserText("ping")},
+		MaxTokens: 8192,
 	}
-	// err==nil 还不够：请求通了但模型一个字都不吐的情况真实存在(思考把预算烧光、
-	// 正文被安全策略吞掉、兼容层把 content 丢了)。这种配置在会话里就是"不回话",
-	// 测试却报成功——正是本项要消除的落差。没有可见正文一律判失败。
-	reply = strings.TrimSpace(reply)
+	acc := llm.NewAccumulator()
+	for ev, err := range prov.Stream(ctx, req) {
+		if err != nil {
+			return time.Since(start), "", err
+		}
+		acc.Add(ev)
+	}
+	lat := time.Since(start)
+	reply := strings.TrimSpace(acc.Message().Text())
 	if reply == "" {
 		return lat, "", fmt.Errorf("模型无回复内容（请求已通，但未返回任何文本）")
 	}

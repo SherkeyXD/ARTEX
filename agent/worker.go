@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/guard"
+	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
-	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/SherkeyXD/ARTEX/intercept"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -315,7 +316,7 @@ func renderWorkerGraphOverview(data map[string]any) string {
 // max_turns) and a per-kind breakdown of what was written back (so an intent that
 // explored but persisted nothing isn't mistaken for done, and the engine can log
 // facts/assets/findings separately instead of lumping them under "facts").
-func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), notifyFinding func(int64, string)) (harness.TerminalReason, WriteCounts, error) {
+func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks guard.HookRunner, emit func(db.Activity), notifyFinding func(int64, string)) (runtime.TerminalReason, WriteCounts, error) {
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, notifyFinding, "", "")
 }
 
@@ -323,11 +324,11 @@ func (w *Worker) Execute(ctx context.Context, name string, taskID int64, as *db.
 // human-authored message. The HTTP handler does not edit the transcript;
 // agentcore records the message as a normal user turn when this Worker starts.
 // This keeps Worker continuation identical to the regular agent chat flow.
-func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
+func (w *Worker) ExecuteWithMessage(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks guard.HookRunner, emit func(db.Activity), notifyFinding func(int64, string), requestID, message string) (runtime.TerminalReason, WriteCounts, error) {
 	return w.execute(ctx, name, taskID, as, ts, intent, hooks, emit, notifyFinding, strings.TrimSpace(requestID), strings.TrimSpace(message))
 }
 
-func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks harness.HookRunner, emit func(db.Activity), notifyFinding func(int64, string), requestID, message string) (harness.TerminalReason, WriteCounts, error) {
+func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.AssetStore, ts *db.ExplorationStore, intent *db.Node, hooks guard.HookRunner, emit func(db.Activity), notifyFinding func(int64, string), requestID, message string) (runtime.TerminalReason, WriteCounts, error) {
 	tsx := NewToolSet(ts, name)
 	tsx.SetTaskID(taskID)
 	coverageEnabled := as == nil || as.CoverageEnabled(taskID)
@@ -391,7 +392,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		settle = wrapupSettlementForTask("worker", []string{"Bash"}, clamped)
 	}
 	opts := agentcore.Options{
-		Provider:        w.prov,
+		Provider:        toNormaProvider(w.prov),
 		SystemPrompt:    system,
 		DynamicBoundary: boundary,
 		Tools:           tools,
@@ -426,7 +427,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		MaxTokens:     w.maxTokens(),                          // 0 = 不发上限,由服务端默认值决定
 	}
 	if hooks != nil { // typed-nil guard: only set when concrete (avoids harness panic)
-		opts.Hooks = hooks
+		opts.Hooks = AdaptGuardHooks(hooks)
 	}
 	intentID := intent.ID
 	emitWrap := func(r db.Activity) {
@@ -446,7 +447,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				"\n\n请优先执行这条人工输入。"
 		}
 		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody, hooks)
-		return harness.TerminalReason(reason), tsx.Writes(), err
+		return reason, tsx.Writes(), err
 	}
 
 	s := agentcore.NewSession(opts)
@@ -472,5 +473,5 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// still settles (no external hard-timeout backstop needed). ctx itself carries only
 	// pause / planner kill / shutdown, which the engine distinguishes and re-queues/stops.
 	_, reason, err := captureRunSession(ctx, s, input, emitWrap)
-	return reason, tsx.Writes(), err
+	return runtime.TerminalReason(reason), tsx.Writes(), err
 }

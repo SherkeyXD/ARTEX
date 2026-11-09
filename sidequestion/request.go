@@ -6,8 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Autumn-27/norma/compaction"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 type Exchange struct {
@@ -41,7 +40,7 @@ var ErrContextBudget = errors.New("旁路上下文压缩后仍超过模型预算
 // safety factor. Include system/schema and framing costs too; JSON characters
 // are not tokens (and marshaling HTML can add many non-semantic escapes).
 func EstimateInputTokens(req llm.CompletionRequest) int {
-	tokens := compaction.EstimateTokens(req.Messages)*4/3 + 32 + len(req.Messages)*8
+	tokens := llm.EstimateTokens(req.Messages)*4/3 + 32 + len(req.Messages)*8
 	for _, text := range req.System {
 		tokens += (len(text)+2)/3 + 8
 	}

@@ -8,8 +8,8 @@ import (
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	"github.com/Autumn-27/norma/tool"
 )
@@ -98,7 +98,7 @@ func TestCaptureApprovalLifecycle(t *testing.T) {
 					return tool.Text("probe succeeded"), nil
 				},
 			})
-			_, _, err := captureRun(ctx, agentcore.Options{Provider: provider, Tools: []tool.CoreTool{probe}, Hooks: AdaptGuardHooks(g.Hooks()),
+			_, _, err := captureRun(ctx, agentcore.Options{Provider: toNormaProvider(provider), Tools: []tool.CoreTool{probe}, Hooks: AdaptGuardHooks(g.Hooks()),
 				PermissionMode: permission.ModeBypass, WorkingDir: t.TempDir(), MaxTurns: 2}, "record this review", nil)
 			if err != nil {
 				t.Fatal(err)

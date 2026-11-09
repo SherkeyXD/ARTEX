@@ -27,8 +27,7 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/llm"
-	"github.com/Autumn-27/norma/transcript"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // Compactor performs background cold-node compaction for many explorations.
@@ -90,7 +89,7 @@ func (c *Compactor) OnPlannerRound(ctx context.Context, ts *db.ExplorationStore)
 		// 的会话循环，所以 ctx 上没有 session id；按 session-id 头做提示缓存/粘性
 		// 路由的网关（opencode zen 缺 x-opencode-session 直接 400）就收不到该头。
 		// 这里补一个按探索稳定的 id：同一探索的所有压缩请求共享它，能带上会话头。
-		bg = transcript.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", ts.ID()))
+		bg = llm.WithSessionID(bg, fmt.Sprintf("exp%d-compactor", ts.ID()))
 		if needMajor {
 			c.major(bg, ts)
 		} else {

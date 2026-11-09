@@ -9,8 +9,8 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -501,7 +501,7 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		settle = wrapupSettlementForTask("planner", nil, clamped)
 	}
 	opts := agentcore.Options{
-		Provider:        p.prov,
+		Provider:        toNormaProvider(p.prov),
 		SystemPrompt:    system,
 		DynamicBoundary: boundary,
 		Tools:           tools,

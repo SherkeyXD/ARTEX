@@ -3,7 +3,7 @@ package agent
 import (
 	"encoding/json"
 
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 

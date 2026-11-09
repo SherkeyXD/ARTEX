@@ -15,8 +15,8 @@ import (
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -80,8 +80,8 @@ var errWorkControlConflict = errors.New("work control conflict")
 // retryableWorkerModelError excludes errors already handled by the task router.
 // In particular, a quota error after partial streaming advances the task cursor
 // for the next LLM call but must not replay this whole intent on the backup.
-func retryableWorkerModelError(reason harness.TerminalReason, err error) bool {
-	return reason == harness.ReasonModelError && !isTaskLLMRuntimeError(err)
+func retryableWorkerModelError(reason runtime.TerminalReason, err error) bool {
+	return reason == runtime.ReasonModelError && !isTaskLLMRuntimeError(err)
 }
 
 // Engine drives the event-driven exploration loop with real LLM agents
@@ -543,7 +543,7 @@ type steerHooks struct {
 }
 
 // 空转回合(只有思考、既无正文也无工具调用)续跑次数的默认值，与 SDK 空响应重试的
-// 内置默认(norma/llm/openai.go 的 emptyResponseRetries)保持一致——两层共用同一个
+// 内置默认(llm/openai.go 的 emptyResponseRetries)保持一致——两层共用同一个
 // 旋钮，不配置时的行为也该对齐。解析见 Engine.emptyTurnNudgeLimit。
 //
 // 注意这个数是「一条意图的总量」，不是「连续几次」:harness 自身的 stopHookActive
@@ -556,7 +556,7 @@ const defaultEmptyTurnNudges = 2
 //
 // 这种回合在 harness 眼里是一次自然结束(stop_reason=end_turn 且无 tool_use)，五层
 // LLM 重试一层都不适用——它不是错误，是模型「想完了但没动手」。SDK 的空响应重试也
-// 够不着:它以「有没有 yield 过事件」判空，而思考增量本身就是事件(norma/llm/openai.go
+// 够不着:它以「有没有 yield 过事件」判空，而思考增量本身就是事件(llm/openai.go
 // 的 SEThinkingDelta)，所以 thinking-only 不算空。何况那层是原样重发整个 prompt，
 // 对这种由上下文形状决定的空转，重发只会让模型再想一遍。这里换成追加一条指令，让它
 // 带着已经产出的思考继续，输入变了才有理由给出不同的行为。
@@ -1018,7 +1018,7 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	}
 	wTaskID, _ := strconv.ParseInt(t.ID, 10, 64)
 	e.BeginLLMCall(t.ID)
-	var reason harness.TerminalReason
+	var reason runtime.TerminalReason
 	var wrote agent.WriteCounts
 	var err error
 	if hasChatMessage {
@@ -1139,10 +1139,10 @@ func (e *Engine) runIntent(ctx context.Context, t *Task, name string, worker *ag
 	switch {
 	case err != nil:
 		state = "blocked"
-	case reason == harness.ReasonMaxTurns:
+	case reason == runtime.ReasonMaxTurns:
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d 撞步数上限(exhausted)，本次写回 %s", name, intent.ID, wrote)
-	case reason == harness.ReasonTimeout:
+	case reason == runtime.ReasonTimeout:
 		state = "exhausted"
 		log.Printf("[worker %s] intent %d 运行超时(exhausted)，收尾后写回 %s", name, intent.ID, wrote)
 	}

@@ -9,12 +9,11 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	_ "github.com/SherkeyXD/ARTEX/runtime/harness/pi"
 	"github.com/SherkeyXD/ARTEX/runtime/middleware"
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
@@ -34,38 +33,6 @@ func ActiveHarness() HarnessKind {
 		return HarnessNorma
 	}
 	return HarnessPi
-}
-
-type legacyHookRunner struct {
-	inner guard.HookRunner
-}
-
-func (l legacyHookRunner) PreToolUse(ctx context.Context, name string, input []byte) (bool, string, []byte) {
-	if l.inner == nil {
-		return false, "", nil
-	}
-	return l.inner.PreToolUse(ctx, name, input)
-}
-
-func (l legacyHookRunner) PostToolUse(ctx context.Context, name string, input, result []byte, isErr bool) {
-	if l.inner != nil {
-		l.inner.PostToolUse(ctx, name, input, result, isErr)
-	}
-}
-
-func (l legacyHookRunner) Stop(ctx context.Context, messages []llm.Message) (bool, []string, string) {
-	return false, nil, ""
-}
-
-// AdaptGuardHooks adapts a guard.HookRunner to harness.HookRunner for legacy Norma agentcore sessions.
-func AdaptGuardHooks(h guard.HookRunner) harness.HookRunner {
-	if h == nil {
-		return nil
-	}
-	if hr, ok := h.(harness.HookRunner); ok {
-		return hr
-	}
-	return legacyHookRunner{inner: h}
 }
 
 // UniversalAgentOptions contains all execution parameters needed to run an agent turn
@@ -161,7 +128,7 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 	input string,
 	tools []actool.CoreTool,
 	sysBody string,
-	hooks harness.HookRunner,
+	hooks guard.HookRunner,
 ) (runtime.TerminalReason, error) {
 	sessionID := WorkerSessionID(explorationID(ts), intent.ID)
 	var guardFunc middleware.GuardFunc

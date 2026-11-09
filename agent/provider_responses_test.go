@@ -3,7 +3,7 @@ package agent
 import (
 	"testing"
 
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // TestConfigFromOpenAIResponses locks the openai-responses format wiring:

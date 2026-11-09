@@ -14,7 +14,6 @@ import (
 	"sync"
 
 	"github.com/SherkeyXD/ARTEX/runtime"
-	"github.com/Autumn-27/norma/llm"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 	"gopkg.in/yaml.v3"
@@ -205,18 +204,13 @@ func (r *Registry) Tool() actool.CoreTool {
 			if strings.TrimSpace(in.Args) != "" {
 				body += "\n\n## Additional context from the caller\n\n" + in.Args
 			}
-			invocation := llm.SkillInvocationMessage(s.Name, s.Dir, body)
-
-			ack := fmt.Sprintf("Skill %q loaded. Its instructions were added to the conversation as a separate guidance message — follow them.", s.Name)
+			ack := fmt.Sprintf("Skill %q loaded:\n\n%s", s.Name, body)
 			if r.OnInvoke != nil {
 				if extra := r.OnInvoke(s); extra != "" {
 					ack += "\n\n" + extra
 				}
 			}
-			return actool.Result{
-				Content: []llm.ContentBlock{llm.TextBlock(ack)},
-				Extra:   []llm.Message{invocation},
-			}, nil
+			return actool.Text(ack), nil
 		},
 	})
 }

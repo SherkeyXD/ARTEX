@@ -11,9 +11,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Autumn-27/norma/harness"
-	"github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
+
+// QueryDeps defines injectable model call functions.
+type QueryDeps struct {
+	CallModel     func(ctx context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error]
+	CallModelSync func(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error)
+	NewID         func() string
+}
 
 type Parent struct {
 	ConversationID int64 `json:"conversation_id,omitempty"`
@@ -90,7 +96,7 @@ func WithAttempt(ctx context.Context) context.Context {
 
 // Attach uses QueryDeps rather than a global provider hook so compaction and
 // other auxiliary completions cannot replace the main conversation checkpoint.
-func Attach(ctx context.Context, parent Parent, deps harness.QueryDeps, provider llm.Provider) (context.Context, harness.QueryDeps) {
+func Attach(ctx context.Context, parent Parent, deps QueryDeps, provider llm.Provider) (context.Context, QueryDeps) {
 	publish, _ := ctx.Value(publisherKey{}).(Publisher)
 	if publish == nil {
 		return ctx, deps
