@@ -2,7 +2,31 @@ package agent
 
 import (
 	"strings"
+
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
+
+func wrapupSettlement(agentKey string, disabledTools []string) *runtime.Settlement {
+	return &runtime.Settlement{Prompt: resolveWrapup(agentKey), MaxTurns: resolveWrapupTurns(agentKey), DisabledTools: append([]string(nil), disabledTools...)}
+}
+
+func wrapupSettlementForTask(agentKey string, disabledTools []string, clamped bool) *runtime.Settlement {
+	settlement := wrapupSettlement(agentKey, disabledTools)
+	if clamped {
+		if prompt := resolveTaskTimeoutWrapup(agentKey); prompt != "" {
+			settlement.PromptByReason = map[runtime.TerminalReason]string{runtime.ReasonTimeout: prompt, runtime.ReasonMaxTurns: settlement.Prompt}
+			settlement.MaxTurns = resolveTaskTimeoutTurns(agentKey)
+		}
+	}
+	return settlement
+}
+
+func compactionConfig(window int) *runtime.CompactionConfig {
+	if window <= 0 {
+		window = defaultWindowK * 1000
+	}
+	return &runtime.CompactionConfig{ContextWindow: window}
+}
 
 // 收尾提示词(wrap-up / settlement prompt):当 agent 因【步数耗尽(MaxTurns)】或
 // 【超时(run_seconds/MaxDuration)】被终止时,SDK 的 settlement 阶段会注入这段提示,

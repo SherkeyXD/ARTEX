@@ -131,6 +131,18 @@ type overriddenTool struct {
 func (o *overriddenTool) Description() string         { return o.desc }
 func (o *overriddenTool) InputSchema() map[string]any { return o.schema }
 
+func (o *overriddenTool) ParametersSchema() json.RawMessage {
+	data, err := json.Marshal(o.schema)
+	if err != nil {
+		return o.CoreTool.ParametersSchema()
+	}
+	return data
+}
+
+func (o *overriddenTool) Execute(ctx context.Context, input json.RawMessage) (any, error) {
+	return actool.ExecuteCall(ctx, o, input)
+}
+
 func (o *overriddenTool) Call(ctx context.Context, in json.RawMessage, tc *actool.ToolContext) (actool.Result, error) {
 	return o.CoreTool.Call(ctx, injectDefaults(in, o.schema), tc)
 }

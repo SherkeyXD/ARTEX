@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -343,6 +343,11 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// worker 刻意不给 MultiEdit/Glob/Grep：文件精改用 Edit、检索走 Bash(grep/find)，
 	// 收敛工具面、减少低价值调用。其余 SDK 默认工具(Read/Write/Edit/LS/Bash/Sleep)照常。
 	base = append(base, defaultToolsExcept("MultiEdit", "Glob", "Grep")...)
+	var networkErr error
+	base, networkErr = addNetworkTools(base, w.webSearch)
+	if networkErr != nil {
+		return runtime.ReasonModelError, tsx.Writes(), networkErr
+	}
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts), IntentID: intent.ID})
 	tools, def, cleanup := AugmentTools(ctx, "worker", base)
 	defer cleanup()
@@ -381,7 +386,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			}
 		}
 	}
-	system, _ := deferredSystem(sysBody, def)
+	system, boundary := deferredSystem(sysBody, def)
 	intentID := intent.ID
 	emitWrap := func(r db.Activity) {
 		if emit != nil {
@@ -397,7 +402,6 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 		input += "\n\n" + workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
 			"\n\n请优先执行这条人工输入。"
 	}
-	sysBodyFinal := strings.Join(system, "\n\n")
-	reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBodyFinal, hooks)
+	reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody, hooks, UniversalAgentOptions{SystemPrompts: system, DynamicBoundary: boundary, Deferred: def})
 	return reason, tsx.Writes(), err
 }

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/SherkeyXD/ARTEX/runtime"
 )
 
 func TestParseSkillFrontmatter(t *testing.T) {
@@ -71,8 +73,8 @@ Instructions in subfolder
 	if err != nil {
 		t.Fatalf("UniversalTool Execute failed: %v", err)
 	}
-	str, ok := res.(string)
-	if !ok || !strings.Contains(str, "Instructions in subfolder") {
+	output, ok := res.(runtime.ToolOutput)
+	if !ok || len(output.Messages) != 1 || !strings.Contains(output.Messages[0].Text(), "Instructions in subfolder") {
 		t.Fatalf("unexpected tool output: %v", res)
 	}
 }

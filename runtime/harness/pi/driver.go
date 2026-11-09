@@ -68,6 +68,9 @@ func (d *Driver) ExecuteTurn(ctx context.Context, session *runtime.Session, opts
 			continue
 		}
 		toolMap[tool.Name()] = tool
+		if visible, ok := tool.(runtime.SchemaVisibility); ok && !visible.SchemaVisible() {
+			continue
+		}
 		toolDefs = append(toolDefs, runtime.ToolDefinition{Name: tool.Name(), Description: tool.Description(), Parameters: tool.ParametersSchema()})
 	}
 	tc := &runtime.TurnContext{SessionID: session.ID, AgentID: session.AgentID, TaskID: session.TaskID, TurnIndex: result.TurnIndex}
@@ -203,6 +206,7 @@ func (d *Driver) ExecuteTurn(ctx context.Context, session *runtime.Session, opts
 		var text, iterationThinking strings.Builder
 		var signature string
 		var calls []*runtime.ToolCallData
+		expansionErrors := make(map[string]error)
 		var streamErr error
 		for attempt := 0; attempt < 2; attempt++ {
 			for event, err := range opts.Provider.Stream(phaseCtx, req) {
@@ -232,6 +236,11 @@ func (d *Driver) ExecuteTurn(ctx context.Context, session *runtime.Session, opts
 					signature = event.Signature
 				case runtime.LLMEventToolCall:
 					if event.ToolCall != nil {
+						if dispatcher, ok := toolMap[event.ToolCall.Name].(runtime.ToolCallExpander); ok {
+							if err := dispatcher.ExpandCall(event.ToolCall); err != nil {
+								expansionErrors[event.ToolCall.ID] = err
+							}
+						}
 						calls = append(calls, event.ToolCall)
 						emit(runtime.Event{Type: runtime.EventToolCall, ToolCall: event.ToolCall})
 					}
@@ -326,6 +335,9 @@ func (d *Driver) ExecuteTurn(ctx context.Context, session *runtime.Session, opts
 			case gateErr != nil:
 				callErr = gateErr
 				content = gateErr.Error()
+			case expansionErrors[call.ID] != nil:
+				callErr = expansionErrors[call.ID]
+				content = callErr.Error()
 			case !proceed:
 				callErr = fmt.Errorf("tool blocked: %s", reason)
 				content = "[拦截规则拦截] " + reason

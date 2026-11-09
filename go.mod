@@ -3,8 +3,10 @@ module github.com/SherkeyXD/ARTEX
 go 1.26.3
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/klauspost/compress v1.18.6
 	golang.org/x/crypto v0.55.0

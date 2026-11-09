@@ -118,6 +118,7 @@ func Build(s Spec) CoreTool {
 	if err != nil {
 		raw = json.RawMessage(`{"type":"object"}`)
 	}
+	s.Schema = schema
 	return &builtTool{
 		spec:      s,
 		rawSchema: raw,
@@ -129,7 +130,10 @@ func (b *builtTool) Name() string {
 }
 
 func (b *builtTool) Description() string {
-	return b.spec.Description
+	if b.spec.Prompt == "" {
+		return b.spec.Description
+	}
+	return b.spec.Description + "\n\n" + b.spec.Prompt
 }
 
 func (b *builtTool) InputSchema() map[string]any {
@@ -160,17 +164,52 @@ func (b *builtTool) Call(ctx context.Context, input json.RawMessage, tc *ToolCon
 }
 
 func (b *builtTool) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
+	return ExecuteCall(ctx, b, rawArgs)
+}
+
+// ExecuteCall invokes the outermost CoreTool.Call, preserving decorators, then
+// normalizes results once for the runtime. Decorators use this rather than the
+// Execute method promoted from their embedded tool.
+func ExecuteCall(ctx context.Context, tool CoreTool, rawArgs json.RawMessage) (any, error) {
 	tc := ToolContextFrom(ctx)
-	res, err := b.Call(ctx, rawArgs, tc)
+	res, err := tool.Call(ctx, rawArgs, tc)
 	if err != nil {
 		return nil, err
 	}
-	text := res.Flatten()
+	text := CaptureOnce(tc, runtime.SanitizeToolOutput(res.Flatten()))
 	if res.IsError {
 		return nil, fmt.Errorf("%s", text)
 	}
-	if strings.Contains(text, "<persisted-output>") || strings.Contains(text, "characters truncated]") {
-		return runtime.ToolOutput{Content: text, Captured: true}, nil
+	captured := alreadyCaptured(text)
+	if captured || len(res.Extra) > 0 {
+		return runtime.ToolOutput{Content: text, Captured: captured, Messages: providerMessages(res.Extra)}, nil
 	}
 	return text, nil
+}
+
+func providerMessages(messages []llm.Message) []runtime.Message {
+	out := make([]runtime.Message, 0, len(messages))
+	for _, message := range messages {
+		role := runtime.RoleUser
+		if message.Role == llm.RoleAssistant {
+			role = runtime.RoleAssistant
+		}
+		parts := make([]runtime.Part, 0, len(message.Content))
+		for _, block := range message.Content {
+			switch block.Type {
+			case llm.BlockText:
+				parts = append(parts, runtime.TextPart(block.Text))
+			case llm.BlockThinking:
+				part := runtime.ThinkingPart(block.Thinking)
+				part.Signature = block.Signature
+				parts = append(parts, part)
+			case llm.BlockToolUse:
+				parts = append(parts, runtime.ToolCallPart(block.ID, block.Name, block.Input))
+			case llm.BlockToolResult:
+				parts = append(parts, runtime.ToolResultPart(block.ToolUseID, "", (Result{Content: block.Content}).Flatten(), block.IsError, 0))
+			}
+		}
+		out = append(out, runtime.Message{Role: role, Parts: parts})
+	}
+	return out
 }

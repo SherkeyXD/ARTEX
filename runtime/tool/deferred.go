@@ -65,13 +65,13 @@ func RenderDeferredToolsBlock(names []string) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("<available-deferred-tools>\n")
-	sb.WriteString("以下工具当前处于可用状态，但未在首轮预先展示完整 Schema：\n")
+	sb.WriteString("以下工具已经解锁，但完整 Schema 延迟加载：先用 SearchExtraTools 查找工具与参数，再用 ExecuteExtraTool 执行。\n")
 	for _, n := range names {
 		sb.WriteString("- ")
 		sb.WriteString(n)
 		sb.WriteString("\n")
 	}
-	sb.WriteString("优先使用基础核心工具；仅在需要调用特定专有功能时调用上述工具。\n")
+	sb.WriteString("优先使用基础核心工具；仅在需要专有功能时加载延迟工具的 Schema。\n")
 	sb.WriteString("</available-deferred-tools>")
 	return sb.String()
 }

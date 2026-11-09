@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/llm"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 // Planner is the event-driven LLM planner (docs §4.3): each time the asset or
@@ -469,6 +469,11 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	// 领域工具 + 基础默认工具集（Read/Write/Edit/MultiEdit/LS/Glob/Grep/Bash）
 	// 资产覆盖度功能关闭时剔除 add_task_scope/list_untested_assets（不入 prompt）。
 	base := append(tsx.DropCoverageTools(tsx.PlannerTools()), actool.DefaultTools()...)
+	base, err = addNetworkTools(base, p.webSearch)
+	if err != nil {
+		return false, "", err
+	}
+	base = append(base, p.todoFor(ts.ID()).TodoWrite(), p.todoFor(ts.ID()).TodoRead())
 	ctx = WithRunInfo(ctx, RunInfo{TaskID: taskID, ExplorationID: explorationID(ts)})
 	tools, def, cleanup := AugmentTools(ctx, "planner", base)
 	defer cleanup()
@@ -490,7 +495,8 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 	if p.wantConstraints() {
 		sysBody += constraintBlock(ts) // 操作约束(若有)注入系统提示,框定探索边界
 	}
-	system, _ := deferredSystem(sysBody, def)
+	system, boundary := deferredSystem(sysBody, def)
+	maxDuration, clamped := clampMaxDuration(tc.DeadlineUnix, 0)
 	todos := p.todoFor(ts.ID())
 
 	lead := "刚有具体变动（见下面的【本次触发本轮的实际变动】），据此规划下一步："
@@ -510,6 +516,13 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 		Model:           p.model,
 		Provider:        p.prov,
 		SystemPrompts:   system,
+		DynamicBoundary: boundary,
+		NonStreaming:    p.nonStreaming(),
+		MaxDuration:     maxDuration,
+		Settlement:      wrapupSettlementForTask("planner", nil, clamped),
+		Compaction:      compactionConfig(p.compactionWindow()),
+		Deferred:        def,
+		Todos:           p.todoFor(ts.ID()),
 		Input:           input,
 		Tools:           tools,
 		MaxTurns:        p.maxTurns,

@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
+	actool "github.com/SherkeyXD/ARTEX/runtime/tool"
 )
 
 type behaviorProvider struct {
@@ -28,35 +28,6 @@ func (p *behaviorProvider) Complete(ctx context.Context, req llm.CompletionReque
 func (p *behaviorProvider) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
 	if p.stream != nil {
 		return p.stream(ctx, req)
-	}
-	if p.complete != nil {
-		return func(yield func(llm.StreamEvent, error) bool) {
-			msg, stop, usage, err := p.complete(ctx, req)
-			if err != nil {
-				yield(llm.StreamEvent{}, err)
-				return
-			}
-			for _, b := range msg.Content {
-				switch b.Type {
-				case llm.BlockText:
-					if !yield(llm.StreamEvent{Type: llm.SETextDelta, Text: b.Text}, nil) {
-						return
-					}
-				case llm.BlockThinking:
-					if !yield(llm.StreamEvent{Type: llm.SEThinkingDelta, Text: b.Thinking}, nil) {
-						return
-					}
-				case llm.BlockToolUse:
-					if !yield(llm.StreamEvent{Type: llm.SEToolUseStart, ToolID: b.ID, ToolName: b.Name}, nil) {
-						return
-					}
-					if !yield(llm.StreamEvent{Type: llm.SEToolInputJSON, Text: string(b.Input)}, nil) {
-						return
-					}
-				}
-			}
-			yield(llm.StreamEvent{Type: llm.SEMessageDelta, StopReason: stop, Usage: usage}, nil)
-		}
 	}
 	return func(yield func(llm.StreamEvent, error) bool) {
 		yield(llm.StreamEvent{}, errors.New("unexpected streaming request"))
