@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/permission"
+	actool "github.com/Autumn-27/norma/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/llm"
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
 )
 
 // ChatAgent is the generic, task-independent conversational runner behind the chat
@@ -155,6 +155,11 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 			Model:           c.model,
 			Provider:        c.prov,
 			SystemPrompts:   system,
+			DynamicBoundary: boundary,
+			NonStreaming:    c.nonStreaming(),
+			MaxDuration:     maxDuration,
+			Settlement:      nativeSettlement(opts.Settlement),
+			Compaction:      nativeCompaction(opts.Compaction),
 			Input:           message,
 			Tools:           tools,
 			MaxTurns:        maxTurns,

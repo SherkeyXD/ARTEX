@@ -112,18 +112,18 @@ func TestWorkerUniversalRunner(t *testing.T) {
 		t.Fatalf("expected ReasonCompleted, got: %v", reason)
 	}
 
-	var hasThinking, hasText bool
+	var hasThinking, hasResult bool
 	for _, act := range emittedActivities {
 		if act.Kind == "thinking" {
 			hasThinking = true
 		}
-		if act.Kind == "text" {
-			hasText = true
+		if act.Kind == "result" {
+			hasResult = true
 		}
 	}
 
-	if !hasThinking || !hasText {
-		t.Fatalf("expected thinking and text activities to be emitted, got: %+v", emittedActivities)
+	if !hasThinking || !hasResult {
+		t.Fatalf("expected thinking and result activities to be emitted, got: %+v", emittedActivities)
 	}
 }
 

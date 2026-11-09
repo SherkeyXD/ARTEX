@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
@@ -23,8 +24,10 @@ func captureRuntimeTurn(
 	input string,
 	emit func(db.Activity),
 ) (string, runtime.TerminalReason, error) {
-	ctx, auditTrace := intercept.WithTrace(ctx, input, nil)
+	started := time.Now()
+	ctx, auditTrace := intercept.WithTrace(ctx, input, approvalHistory(adapter.ToProviderMessages(session.Messages())))
 	defer auditTrace.Finish()
+	defer func() { sidequestion.Finish(ctx, adapter.ToProviderMessages(session.Messages())) }()
 
 	rec := func(r db.Activity) {
 		if r.Kind == "text" || r.Kind == "tool_result" {
@@ -72,6 +75,11 @@ func captureRuntimeTurn(
 					Metadata:  meta,
 				})
 			}
+		case runtime.EventUsage:
+			if ev.TokenUsage != nil {
+				u := ev.TokenUsage
+				rec(db.Activity{Kind: "usage", InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
+			}
 		}
 	})
 
@@ -81,8 +89,8 @@ func captureRuntimeTurn(
 	}
 
 	res, err := runner.RunTurn(ctx, session, input)
-	if err != nil {
-		return "", runtime.ReasonModelError, err
+	if res == nil {
+		res = &runtime.TurnResult{Reason: runtime.ReasonModelError, Error: err}
 	}
 
 	// Emit final thinking if any
@@ -99,34 +107,40 @@ func captureRuntimeTurn(
 		})
 	}
 
-	// Emit final text
-	if res.FinalText != "" {
-		meta, _ := json.Marshal(map[string]any{
-			"duration_ms": res.Duration.Milliseconds(),
-			"char_count":  len(res.FinalText),
-		})
-		rec(db.Activity{
-			Kind:     "text",
-			Summary:  firstLine(strings.TrimSpace(res.FinalText), 200),
-			Detail:   res.FinalText,
-			Metadata: meta,
-		})
+	reason := res.Reason
+	if reason == "" {
+		switch res.StopReason {
+		case runtime.StopReasonComplete:
+			reason = runtime.ReasonCompleted
+		case runtime.StopReasonMaxSteps:
+			reason = runtime.ReasonMaxTurns
+		case runtime.StopReasonCancelled:
+			reason = runtime.ReasonAbortedStreaming
+		default:
+			if err != nil {
+				reason = runtime.ReasonModelError
+			} else {
+				reason = runtime.ReasonCompleted
+			}
+		}
 	}
-
-	// Update side-question capture with final session messages
-	sidequestion.Finish(ctx, adapter.ToProviderMessages(session.Messages()))
-
-	var reason runtime.TerminalReason
-	switch res.StopReason {
-	case runtime.StopReasonComplete:
-		reason = runtime.ReasonCompleted
-	case runtime.StopReasonMaxSteps:
-		reason = runtime.ReasonMaxTurns
-	case runtime.StopReasonCancelled:
-		reason = runtime.ReasonAbortedStreaming
-	default:
-		reason = runtime.ReasonCompleted
+	meta, _ := json.Marshal(map[string]any{"total_ms": time.Since(started).Milliseconds(), "ttft_ms": res.TTFT.Milliseconds(), "terminal_reason": reason, "turns": res.Iterations})
+	detail := res.FinalText
+	if detail == "" {
+		detail = "运行结束：" + string(reason)
 	}
+	if err != nil {
+		detail += "\n\n" + err.Error()
+	}
+	if reason == runtime.ReasonAbortedStreaming || reason == runtime.ReasonAbortedTools {
+		if _, short, why, ok := AbortReason(ctx); ok {
+			detail += "\n\n中断原因：" + short + "；" + why
+		}
+	}
+	// Activity totals are aggregated across runs by the DB. Persist this run's
+	// usage here; the resumed session keeps its separate cumulative counter.
+	u := res.TokenUsage
+	rec(db.Activity{Kind: "result", Summary: firstLine(detail, 400), Detail: detail, IsError: err != nil, Metadata: meta, InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
 
-	return res.FinalText, reason, nil
+	return res.FinalText, reason, err
 }

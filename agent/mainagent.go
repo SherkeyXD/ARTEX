@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // MainAgent is the thin human-interface orchestrator (docs §4.2 / §7). The human
@@ -17,16 +17,16 @@ import (
 // (→planner) or direct high-priority intents (→frontier). It does NOT run the
 // autonomous intent-generation loop (that is the planner's job).
 type MainAgent struct {
-	prov            llm.Provider
-	model           string
-	window          int                                    // context window in tokens (for compaction)
-	windowFn        func() int                             // optional dynamic task-chain minimum
-	maxTurns        int                                    // max agent turns per run (0 = unlimited)
-	webSearch       WebSearchOpts                          // web_search tool backend selection (off by default)
-	workDir         string                                 // shared work dir (surfaced in prompt as artifact-output target)
-	steerWork       func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
-	nonStreamingFn  func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
-	maxTokensFn     func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
+	prov           llm.Provider
+	model          string
+	window         int                                    // context window in tokens (for compaction)
+	windowFn       func() int                             // optional dynamic task-chain minimum
+	maxTurns       int                                    // max agent turns per run (0 = unlimited)
+	webSearch      WebSearchOpts                          // web_search tool backend selection (off by default)
+	workDir        string                                 // shared work dir (surfaced in prompt as artifact-output target)
+	steerWork      func(intentID int64, msg string) error // engine callback: steer a running work (nil = off)
+	nonStreamingFn func() bool                            // resolver: use non-streaming (Complete) path? (nil = streaming)
+	maxTokensFn    func() int                             // resolver: per-reply output cap (nil/0 = send no cap)
 }
 
 // SetNonStreaming wires a resolver deciding whether runs use the non-streaming
@@ -150,11 +150,15 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 	if ActiveHarness() == HarnessPi {
 		text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
 			AgentKey:        "mainagent",
-			SessionID:       fmt.Sprintf("mainagent-%d", taskID),
+			SessionID:       fmt.Sprintf("mainagent-%d-%d", taskID, mainSeg),
 			TaskID:          taskID,
 			Model:           m.model,
 			Provider:        m.prov,
 			SystemPrompts:   system,
+			DynamicBoundary: boundary,
+			NonStreaming:    m.nonStreaming(),
+			Settlement:      nativeSettlement(opts.Settlement),
+			Compaction:      nativeCompaction(opts.Compaction),
 			Input:           message,
 			Tools:           tools,
 			MaxTurns:        m.maxTurns,

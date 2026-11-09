@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
+	actool "github.com/Autumn-27/norma/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/llm"
@@ -14,7 +17,6 @@ import (
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	_ "github.com/SherkeyXD/ARTEX/runtime/harness/pi"
 	"github.com/SherkeyXD/ARTEX/runtime/middleware"
-	actool "github.com/Autumn-27/norma/tool"
 )
 
 // HarnessKind identifies the underlying agent execution harness.
@@ -46,6 +48,15 @@ type UniversalAgentOptions struct {
 	UniversalProvider runtime.LLMProvider
 	SystemPrompt      string
 	SystemPrompts     []string
+	DynamicBoundary   int
+	NonStreaming      bool
+	MaxDuration       time.Duration
+	Settlement        *runtime.Settlement
+	Compaction        *runtime.CompactionConfig
+	SessionDir        string
+	Ephemeral         bool
+	ToolOutputDir     string
+	Hooks             guard.HookRunner
 	Input             string
 	Tools             []actool.CoreTool
 	UniversalTools    []runtime.Tool
@@ -62,6 +73,14 @@ type UniversalAgentOptions struct {
 // It adapts legacy tool and LLM definitions into canonical runtime.Tool and LLMProvider interfaces,
 // configures middleware pipelines (Guard, Metrics), and captures turn activity streams.
 func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string, runtime.TerminalReason, error) {
+	if opts.WorkingDir != "" {
+		var err error
+		opts.WorkingDir, err = filepath.Abs(opts.WorkingDir)
+		if err != nil {
+			return "", runtime.ReasonModelError, err
+		}
+	}
+	ctx = llm.WithSessionID(ctx, opts.SessionID)
 	// 1. Resolve tools to universal runtime.Tools
 	var tools []runtime.Tool
 	if len(opts.UniversalTools) > 0 {
@@ -77,18 +96,38 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 	}
 
 	// 3. Create or resume Session
-	session := runtime.NewSession(opts.SessionID, opts.AgentKey, fmt.Sprintf("%d", opts.TaskID))
+	sessionDir := opts.SessionDir
+	if sessionDir == "" && opts.WorkingDir != "" {
+		sessionDir = filepath.Join(opts.WorkingDir, ".artex", "runtime-sessions")
+	}
+	if opts.Ephemeral || opts.SessionID == "" {
+		sessionDir = ""
+	}
+	session, release, err := runtime.OpenSession(ctx, sessionDir, opts.SessionID, opts.AgentKey, fmt.Sprintf("%d", opts.TaskID))
+	if err != nil {
+		reason := runtime.ReasonModelError
+		if ctx.Err() != nil {
+			reason = runtime.ReasonAbortedStreaming
+		}
+		return "", reason, err
+	}
+	defer release()
 
 	// 4. Setup Middleware chain: Guard + Metrics
 	var guardFunc middleware.GuardFunc
 	if opts.GuardFunc != nil {
 		guardFunc = opts.GuardFunc
-	} else if opts.Guard != nil {
-		guardFunc = opts.Guard.Check
 	}
 	guardMw := middleware.NewGuardMiddleware(guardFunc)
 	metrics := middleware.NewMetricsRecorder(nil)
 	chain := runtime.NewMiddlewareChain(guardMw, metrics)
+	hooks := opts.Hooks
+	if hooks == nil && opts.Guard != nil {
+		hooks = opts.Guard.Hooks()
+	}
+	if hooks != nil {
+		chain.Add(&runtimeHooks{hooks: hooks, inputs: make(map[string][]byte)})
+	}
 
 	// 5. Build AgentConfig
 	outputLimit := opts.ToolOutputLimit
@@ -104,6 +143,14 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 	cfg := runtime.AgentConfig{
 		Name:            opts.AgentKey,
 		SystemPrompt:    sysPrompt,
+		SystemPrompts:   opts.SystemPrompts,
+		DynamicBoundary: opts.DynamicBoundary,
+		NonStreaming:    opts.NonStreaming,
+		MaxDuration:     opts.MaxDuration,
+		Settlement:      opts.Settlement,
+		Compaction:      opts.Compaction,
+		WorkingDir:      opts.WorkingDir,
+		ToolOutputDir:   opts.ToolOutputDir,
 		Tools:           tools,
 		DriverID:        "pi",
 		ModelName:       opts.Model,
@@ -111,6 +158,9 @@ func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string,
 		MaxIterations:   opts.MaxTurns,
 		ToolOutputLimit: outputLimit,
 		Provider:        llmProv,
+	}
+	if cfg.ToolOutputDir == "" && opts.WorkingDir != "" {
+		cfg.ToolOutputDir = filepath.Join(opts.WorkingDir, "cmd-output")
 	}
 
 	// 6. Execute turn with unified activity capture
@@ -129,19 +179,13 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 	tools []actool.CoreTool,
 	sysBody string,
 	hooks guard.HookRunner,
+	settings ...UniversalAgentOptions,
 ) (runtime.TerminalReason, error) {
 	sessionID := WorkerSessionID(explorationID(ts), intent.ID)
-	var guardFunc middleware.GuardFunc
-	if hooks != nil {
-		guardFunc = func(ctx context.Context, agentID, toolName string, args json.RawMessage) (bool, string, error) {
-			blocked, reason, _ := hooks.PreToolUse(ctx, toolName, []byte(args))
-			if blocked {
-				return false, reason, nil
-			}
-			return true, "", nil
-		}
-	}
-	_, reason, err := RunUniversalAgent(ctx, UniversalAgentOptions{
+	clock := taskClockFrom(ctx)
+	maxDuration, clamped := clampMaxDuration(clock.DeadlineUnix, w.runTimeout)
+	settlement := wrapupSettlementForTask("worker", []string{"Bash"}, clamped)
+	options := UniversalAgentOptions{
 		AgentKey:        name,
 		SessionID:       sessionID,
 		TaskID:          taskID,
@@ -152,12 +196,46 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 		Tools:           tools,
 		MaxTurns:        w.maxTurns,
 		MaxTokens:       w.maxTokens(),
+		NonStreaming:    w.nonStreaming(),
+		MaxDuration:     maxDuration,
+		Settlement:      nativeSettlement(settlement),
+		Compaction:      nativeCompaction(compactionConfig(w.compactionWindow())),
 		ToolOutputLimit: 4000,
 		WorkingDir:      ensureRunDir(w.workDir, taskID, intent.ID),
-		GuardFunc:       guardFunc,
+		Hooks:           hooks,
 		Emit:            emitWrap,
-	})
+	}
+	if len(settings) > 0 {
+		options.SystemPrompts = settings[0].SystemPrompts
+		options.DynamicBoundary = settings[0].DynamicBoundary
+	}
+	_, reason, err := RunUniversalAgent(ctx, options)
 	return reason, err
+}
+
+type runtimeHooks struct {
+	runtime.BaseMiddleware
+	hooks  guard.HookRunner
+	inputs map[string][]byte
+}
+
+func (h *runtimeHooks) OnBeforeToolExec(ctx context.Context, _ *runtime.TurnContext, call *runtime.ToolCallData) (bool, string, error) {
+	blocked, reason, updated := h.hooks.PreToolUse(ctx, call.Name, call.Arguments)
+	if len(updated) > 0 {
+		if !json.Valid(updated) {
+			return false, "", fmt.Errorf("hook returned invalid tool arguments")
+		}
+		call.Arguments = append(json.RawMessage(nil), updated...)
+	}
+	h.inputs[call.ID] = append([]byte(nil), call.Arguments...)
+	return !blocked, reason, nil
+}
+
+func (h *runtimeHooks) OnAfterToolExec(ctx context.Context, _ *runtime.TurnContext, result *runtime.ToolResultData, _ time.Duration) {
+	if input, ok := h.inputs[result.ToolCallID]; ok {
+		h.hooks.PostToolUse(ctx, result.ToolName, input, []byte(result.Content), result.IsError)
+		delete(h.inputs, result.ToolCallID)
+	}
 }
 
 // runWorkerWithPi is a backward-compatible alias for runWorkerWithUniversalRuntime.

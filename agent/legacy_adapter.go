@@ -4,12 +4,35 @@ import (
 	"context"
 	"iter"
 
-	"github.com/SherkeyXD/ARTEX/guard"
-	"github.com/SherkeyXD/ARTEX/llm"
-	"github.com/SherkeyXD/ARTEX/sidequestion"
+	"github.com/Autumn-27/norma/compaction"
 	"github.com/Autumn-27/norma/harness"
 	normallm "github.com/Autumn-27/norma/llm"
+	"github.com/SherkeyXD/ARTEX/guard"
+	"github.com/SherkeyXD/ARTEX/llm"
+	"github.com/SherkeyXD/ARTEX/runtime"
+	"github.com/SherkeyXD/ARTEX/sidequestion"
 )
+
+func nativeSettlement(config *harness.Settlement) *runtime.Settlement {
+	if config == nil {
+		return nil
+	}
+	settlement := &runtime.Settlement{Prompt: config.Prompt, DisabledTools: append([]string(nil), config.DisabledTools...), MaxTurns: config.MaxTurns}
+	if config.PromptByReason != nil {
+		settlement.PromptByReason = make(map[runtime.TerminalReason]string)
+		for reason, prompt := range config.PromptByReason {
+			settlement.PromptByReason[runtime.TerminalReason(reason)] = prompt
+		}
+	}
+	return settlement
+}
+
+func nativeCompaction(config *compaction.Config) *runtime.CompactionConfig {
+	if config == nil {
+		return nil
+	}
+	return &runtime.CompactionConfig{ContextWindow: config.ContextWindow, MaxOutputTokens: config.MaxOutputTokens, KeepRecent: config.KeepRecent}
+}
 
 func toNormaFormat(f llm.Format) normallm.Format {
 	return normallm.Format(f)
@@ -21,31 +44,31 @@ func toNativeFormat(f normallm.Format) llm.Format {
 
 func toNormaBlock(b llm.ContentBlock) normallm.ContentBlock {
 	return normallm.ContentBlock{
-		Type:       normallm.BlockType(b.Type),
-		Text:       b.Text,
-		Thinking:   b.Thinking,
-		Signature:  b.Signature,
-		ID:         b.ID,
-		Name:       b.Name,
-		Input:      b.Input,
-		ToolUseID:  b.ToolUseID,
-		Content:    toNormaBlocks(b.Content),
-		IsError:    b.IsError,
+		Type:      normallm.BlockType(b.Type),
+		Text:      b.Text,
+		Thinking:  b.Thinking,
+		Signature: b.Signature,
+		ID:        b.ID,
+		Name:      b.Name,
+		Input:     b.Input,
+		ToolUseID: b.ToolUseID,
+		Content:   toNormaBlocks(b.Content),
+		IsError:   b.IsError,
 	}
 }
 
 func toNativeBlock(b normallm.ContentBlock) llm.ContentBlock {
 	return llm.ContentBlock{
-		Type:       llm.BlockType(b.Type),
-		Text:       b.Text,
-		Thinking:   b.Thinking,
-		Signature:  b.Signature,
-		ID:         b.ID,
-		Name:       b.Name,
-		Input:      b.Input,
-		ToolUseID:  b.ToolUseID,
-		Content:    toNativeBlocks(b.Content),
-		IsError:    b.IsError,
+		Type:      llm.BlockType(b.Type),
+		Text:      b.Text,
+		Thinking:  b.Thinking,
+		Signature: b.Signature,
+		ID:        b.ID,
+		Name:      b.Name,
+		Input:     b.Input,
+		ToolUseID: b.ToolUseID,
+		Content:   toNativeBlocks(b.Content),
+		IsError:   b.IsError,
 	}
 }
 
@@ -336,4 +359,3 @@ func AdaptGuardHooks(h guard.HookRunner) harness.HookRunner {
 	}
 	return legacyHookRunner{inner: h}
 }
-

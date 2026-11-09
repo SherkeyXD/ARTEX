@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Autumn-27/norma/agentcore"
+	"github.com/Autumn-27/norma/permission"
+	actool "github.com/Autumn-27/norma/tool"
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
-	"github.com/Autumn-27/norma/agentcore"
-	"github.com/Autumn-27/norma/permission"
-	actool "github.com/Autumn-27/norma/tool"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -446,7 +446,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			input += "\n\n" + workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
 				"\n\n请优先执行这条人工输入。"
 		}
-		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody, hooks)
+		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody, hooks, UniversalAgentOptions{SystemPrompts: system, DynamicBoundary: boundary})
 		return reason, tsx.Writes(), err
 	}
 
