@@ -11,7 +11,6 @@ import (
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	_ "github.com/SherkeyXD/ARTEX/runtime/harness/pi"
 	"github.com/SherkeyXD/ARTEX/runtime/middleware"
-	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -58,7 +57,7 @@ type UniversalAgentOptions struct {
 // RunUniversalAgent executes one agent turn using the Universal Agent Runtime (Pi Driver).
 // It adapts legacy tool and LLM definitions into canonical runtime.Tool and LLMProvider interfaces,
 // configures middleware pipelines (Guard, Metrics), and captures turn activity streams.
-func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string, harness.TerminalReason, error) {
+func RunUniversalAgent(ctx context.Context, opts UniversalAgentOptions) (string, runtime.TerminalReason, error) {
 	// 1. Resolve tools to universal runtime.Tools
 	var tools []runtime.Tool
 	if len(opts.UniversalTools) > 0 {
@@ -119,7 +118,7 @@ func (w *Worker) runWorkerWithUniversalRuntime(
 	input string,
 	tools []actool.CoreTool,
 	sysBody string,
-) (harness.TerminalReason, error) {
+) (runtime.TerminalReason, error) {
 	sessionID := WorkerSessionID(explorationID(ts), intent.ID)
 	_, reason, err := RunUniversalAgent(ctx, UniversalAgentOptions{
 		AgentKey:        name,
@@ -150,6 +149,6 @@ func (w *Worker) runWorkerWithPi(
 	input string,
 	tools []actool.CoreTool,
 	sysBody string,
-) (harness.TerminalReason, error) {
+) (runtime.TerminalReason, error) {
 	return w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody)
 }

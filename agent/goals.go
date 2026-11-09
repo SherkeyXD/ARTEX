@@ -150,17 +150,34 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 			emit(r)
 		}
 	}
-	captureRun(ctx, agentcore.Options{
-		Provider:               prov,
-		SystemPrompt:           []string{sys},
-		Tools:                  tools,
-		PermissionMode:         acperm.ModeBypass,
-		DisableBackgroundTasks: true,
-		// 3 步(抽约束 → 登记范围 → 拆目标)各需一次工具调用,给足回合避免收尾前漏调 set_goals。
-		MaxTurns:     8,
-		NonStreaming: nonStreaming, // 该 profile 选非流式时走 Provider.Complete
-		MaxTokens:    maxTokens,    // 0 = 不发上限,由服务端默认值决定
-	}, userMsg, captureEmit)
+	if ActiveHarness() == HarnessPi {
+		_, _, _ = RunUniversalAgent(ctx, UniversalAgentOptions{
+			AgentKey:        "goals",
+			SessionID:       fmt.Sprintf("task-%d-goals", taskID),
+			TaskID:          taskID,
+			Provider:        prov,
+			SystemPrompts:   []string{sys},
+			Input:           userMsg,
+			Tools:           tools,
+			MaxTurns:        8,
+			MaxTokens:       maxTokens,
+			ToolOutputLimit: 4000,
+			WorkingDir:      ensureRunDir(dataDir, taskID, 0),
+			Emit:            captureEmit,
+		})
+	} else {
+		captureRun(ctx, agentcore.Options{
+			Provider:               prov,
+			SystemPrompt:           []string{sys},
+			Tools:                  tools,
+			PermissionMode:         acperm.ModeBypass,
+			DisableBackgroundTasks: true,
+			// 3 步(抽约束 → 登记范围 → 拆目标)各需一次工具调用,给足回合避免收尾前漏调 set_goals。
+			MaxTurns:     8,
+			NonStreaming: nonStreaming, // 该 profile 选非流式时走 Provider.Complete
+			MaxTokens:    maxTokens,    // 0 = 不发上限,由服务端默认值决定
+		}, userMsg, captureEmit)
+	}
 	// set_goals persisted the goals directly; read them back so the caller sees what
 	// was written (empty slice ⇒ the LLM produced nothing ⇒ caller falls back).
 	if ts == nil {

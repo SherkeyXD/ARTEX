@@ -6,7 +6,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/Autumn-27/norma/harness"
+)
+
+// TerminalReason is the canonical terminal reason type in the universal runtime.
+type TerminalReason = runtime.TerminalReason
+
+const (
+	ReasonCompleted         = runtime.ReasonCompleted
+	ReasonMaxTurns          = runtime.ReasonMaxTurns
+	ReasonTimeout           = runtime.ReasonTimeout
+	ReasonModelError        = runtime.ReasonModelError
+	ReasonBlockingLimit     = runtime.ReasonBlockingLimit
+	ReasonPromptTooLong     = runtime.ReasonPromptTooLong
+	ReasonImageError        = runtime.ReasonImageError
+	ReasonStopHookPrevented = runtime.ReasonStopHookPrevented
+	ReasonHookStopped       = runtime.ReasonHookStopped
+	ReasonAbortedStreaming  = runtime.ReasonAbortedStreaming
+	ReasonAbortedTools      = runtime.ReasonAbortedTools
 )
 
 // runTrace retains the latest tool call so an interrupted run can identify the

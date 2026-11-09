@@ -188,6 +188,23 @@ func (u TokenUsage) Total() int {
 	return u.InputTokens + u.OutputTokens
 }
 
+// TerminalReason identifies the high-level cause of agent completion.
+type TerminalReason string
+
+const (
+	ReasonCompleted         TerminalReason = "completed"
+	ReasonMaxTurns          TerminalReason = "max_turns"
+	ReasonTimeout           TerminalReason = "timeout"
+	ReasonModelError        TerminalReason = "model_error"
+	ReasonBlockingLimit     TerminalReason = "blocking_limit"
+	ReasonPromptTooLong     TerminalReason = "prompt_too_long"
+	ReasonImageError        TerminalReason = "image_error"
+	ReasonStopHookPrevented TerminalReason = "stop_hook_prevented"
+	ReasonHookStopped       TerminalReason = "hook_stopped"
+	ReasonAbortedStreaming  TerminalReason = "aborted_streaming"
+	ReasonAbortedTools      TerminalReason = "aborted_tools"
+)
+
 // StopReason describes why a turn or loop finished.
 type StopReason string
 

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/harness"
+	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/Autumn-27/norma/llm"
 )
 
@@ -107,7 +107,7 @@ func TestWorkerUniversalRunner(t *testing.T) {
 		t.Fatalf("worker execute failed: %v", err)
 	}
 
-	if reason != harness.ReasonCompleted {
+	if reason != runtime.ReasonCompleted {
 		t.Fatalf("expected ReasonCompleted, got: %v", reason)
 	}
 
@@ -153,7 +153,7 @@ func TestRunUniversalAgentPlanner(t *testing.T) {
 		t.Fatalf("RunUniversalAgent planner turn failed: %v", err)
 	}
 
-	if reason != harness.ReasonCompleted {
+	if reason != runtime.ReasonCompleted {
 		t.Fatalf("expected ReasonCompleted, got: %v", reason)
 	}
 	if output != "Agent turn executed successfully." {
@@ -192,5 +192,34 @@ func TestChatAgentWithUniversalRuntime(t *testing.T) {
 
 	if resp != "Agent turn executed successfully." {
 		t.Fatalf("expected output 'Agent turn executed successfully.', got %q", resp)
+	}
+}
+
+func TestSeedGoalsWithUniversalRuntime(t *testing.T) {
+	t.Setenv("ARTEX_HARNESS", "pi")
+
+	mockProv := &mockUniversalProvider{}
+	var emittedActivities []db.Activity
+	emitWrap := func(a db.Activity) {
+		emittedActivities = append(emittedActivities, a)
+	}
+
+	// DecomposeGoalsWithProvider with nil stores
+	_ = DecomposeGoalsWithProvider(
+		context.Background(),
+		mockProv,
+		t.TempDir(),
+		"Test goal: discover all subdomains",
+		"In-scope: example.com",
+		nil,
+		nil,
+		1,
+		false,
+		1000,
+		emitWrap,
+	)
+
+	if len(emittedActivities) == 0 {
+		t.Fatalf("expected emitted activities during goal seeding")
 	}
 }

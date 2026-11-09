@@ -11,7 +11,6 @@ import (
 	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/SherkeyXD/ARTEX/runtime/adapter"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/Autumn-27/norma/harness"
 )
 
 // captureRuntimeTurn executes one turn using the Universal Agent Runtime (e.g. Pi Driver)
@@ -23,7 +22,7 @@ func captureRuntimeTurn(
 	chain *runtime.MiddlewareChain,
 	input string,
 	emit func(db.Activity),
-) (string, harness.TerminalReason, error) {
+) (string, runtime.TerminalReason, error) {
 	ctx, auditTrace := intercept.WithTrace(ctx, input, nil)
 	defer auditTrace.Finish()
 
@@ -78,12 +77,12 @@ func captureRuntimeTurn(
 
 	runner, err := runtime.NewAgentRunner(cfg, nil, chain, sink)
 	if err != nil {
-		return "", harness.ReasonModelError, fmt.Errorf("create universal agent runner: %w", err)
+		return "", runtime.ReasonModelError, fmt.Errorf("create universal agent runner: %w", err)
 	}
 
 	res, err := runner.RunTurn(ctx, session, input)
 	if err != nil {
-		return "", harness.ReasonModelError, err
+		return "", runtime.ReasonModelError, err
 	}
 
 	// Emit final thinking if any
@@ -117,16 +116,16 @@ func captureRuntimeTurn(
 	// Update side-question capture with final session messages
 	sidequestion.Finish(ctx, adapter.ToProviderMessages(session.Messages()))
 
-	var reason harness.TerminalReason
+	var reason runtime.TerminalReason
 	switch res.StopReason {
 	case runtime.StopReasonComplete:
-		reason = harness.ReasonCompleted
+		reason = runtime.ReasonCompleted
 	case runtime.StopReasonMaxSteps:
-		reason = harness.ReasonMaxTurns
+		reason = runtime.ReasonMaxTurns
 	case runtime.StopReasonCancelled:
-		reason = harness.ReasonAbortedStreaming
+		reason = runtime.ReasonAbortedStreaming
 	default:
-		reason = harness.ReasonCompleted
+		reason = runtime.ReasonCompleted
 	}
 
 	return res.FinalText, reason, nil

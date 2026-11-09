@@ -446,7 +446,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 				"\n\n请优先执行这条人工输入。"
 		}
 		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody)
-		return reason, tsx.Writes(), err
+		return harness.TerminalReason(reason), tsx.Writes(), err
 	}
 
 	s := agentcore.NewSession(opts)
