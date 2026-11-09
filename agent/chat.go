@@ -144,7 +144,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		MaxTokens:    c.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
 	if c.guard != nil {
-		opts.Hooks = c.guard.Hooks()
+		opts.Hooks = AdaptGuardHooks(c.guard.Hooks())
 	}
 	ctx = attachSideCapture(ctx, &opts)
 
@@ -161,6 +161,7 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 			MaxTokens:       c.maxTokens(),
 			ToolOutputLimit: 4000,
 			WorkingDir:      sessionWorkDir,
+			Guard:           c.guard,
 			Emit: func(r db.Activity) {
 				if emit != nil {
 					r.Worker = agentKey

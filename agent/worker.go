@@ -445,7 +445,7 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 			input += "\n\n" + workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
 				"\n\n请优先执行这条人工输入。"
 		}
-		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody)
+		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody, hooks)
 		return harness.TerminalReason(reason), tsx.Writes(), err
 	}
 

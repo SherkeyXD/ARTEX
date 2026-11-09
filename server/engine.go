@@ -13,6 +13,7 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/guard"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
@@ -529,7 +530,7 @@ func (e *Engine) drainSteer(intentID int64) (string, bool) {
 // of running the tool. No queued message → the guard behaves exactly as before.
 // 它同时负责「空转回合」的续跑，见 Stop。
 type steerHooks struct {
-	inner harness.HookRunner
+	inner guard.HookRunner
 	drain func() (string, bool)
 	// nudges 是本条意图已注入的空转续跑次数，上限 limit。指针:harness 持有的是
 	// steerHooks 的值拷贝，计数必须共享同一份。
@@ -602,8 +603,10 @@ func (h steerHooks) Stop(ctx context.Context, messages []llm.Message) (bool, []s
 		blocking []string
 		msg      string
 	)
-	if h.inner != nil {
-		prevent, blocking, msg = h.inner.Stop(ctx, messages)
+	if stopper, ok := h.inner.(interface {
+		Stop(context.Context, []llm.Message) (bool, []string, string)
+	}); ok {
+		prevent, blocking, msg = stopper.Stop(ctx, messages)
 	}
 	// inner 已经决定硬停、或已经要注入自己的续跑消息 → 尊重它，不再叠加。
 	// limit<=0 = 用户把「空响应重试次数」配成了 -1，即显式关掉这层。

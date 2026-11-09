@@ -1,8 +1,7 @@
 // Package guard implements the safety boundary layer (docs §11): an audit log,
 // user-configured intercept-rule evaluation, and Observer/G5 failure attribution.
 // Every tool call passes through the PreToolUse hook before executing.
-// (The RoE authorization-scope mechanism was removed; a replacement may be added
-// later.) Destructive/exfil gating is no longer hard-coded here — it lives in the
+// Destructive/exfil gating is no longer hard-coded here — it lives in the
 // DB intercept rules (seeded as ordinary [内置] rules, so users can disable or
 // delete them), evaluated via applyIntercept.
 package guard
@@ -15,8 +14,13 @@ import (
 	"time"
 
 	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/Autumn-27/norma/hook"
 )
+
+// HookRunner defines the lifecycle callbacks for tool execution gating and attribution.
+type HookRunner interface {
+	PreToolUse(ctx context.Context, name string, input []byte) (block bool, message string, updated []byte)
+	PostToolUse(ctx context.Context, name string, input, result []byte, isErr bool)
+}
 
 // AuditEntry records one gated tool call.
 type AuditEntry struct {
@@ -27,12 +31,11 @@ type AuditEntry struct {
 	Command string `json:"command,omitempty"`
 }
 
-// Guard enforces the side-effect policy via agent-core hooks.
+// Guard enforces the side-effect policy via agent hooks and universal runtime middleware.
 type Guard struct {
 	mu          sync.Mutex
 	audit       []AuditEntry
 	attrib      map[string]int // failure attribution counts (Observer / G5)
-	reg         *hook.Registry
 	interceptor *intercept.Interceptor // optional; nil disables user-configured rules
 }
 
@@ -44,97 +47,84 @@ func New() *Guard { return newGuard(nil) }
 func NewWithInterceptor(ic *intercept.Interceptor) *Guard { return newGuard(ic) }
 
 func newGuard(ic *intercept.Interceptor) *Guard {
-	g := &Guard{attrib: map[string]int{}, interceptor: ic}
-	g.reg = hook.NewRegistry().
-		On(hook.PreToolUse, g.preToolUse).
-		On(hook.PostToolUse, g.postToolUse)
-	return g
+	return &Guard{attrib: map[string]int{}, interceptor: ic}
 }
 
-// Hooks returns the hook registry to attach to an agent session.
-func (g *Guard) Hooks() *hook.Registry { return g.reg }
+// Hooks returns the hook runner interface to attach to an agent session or engine.
+func (g *Guard) Hooks() HookRunner { return g }
 
-func (g *Guard) preToolUse(ctx context.Context, ev hook.Event) hook.Result {
+// PreToolUse gates tool calls according to intercept rules.
+func (g *Guard) PreToolUse(ctx context.Context, toolName string, input []byte) (bool, string, []byte) {
 	// Extract the shell-command surface for the audit log: Bash + the interactive-shell
 	// tools (shell_open's command, shell_send's text). Destructive/exfil gating is no
 	// longer hard-coded here — it now lives in the DB intercept rules, evaluated by
 	// applyIntercept below. Other tools record an empty command.
 	var cmd string
-	switch ev.ToolName {
+	switch toolName {
 	case "Bash", "shell_open":
 		var in struct {
 			Command string `json:"command"`
 		}
-		_ = json.Unmarshal(ev.Input, &in)
+		_ = json.Unmarshal(input, &in)
 		cmd = in.Command
 	case "shell_send":
 		var in struct {
 			Text string `json:"text"`
 		}
-		_ = json.Unmarshal(ev.Input, &in)
+		_ = json.Unmarshal(input, &in)
 		cmd = in.Text
 	}
-	g.record(ev.ToolName, "allow", "", cmd)
-	return g.applyIntercept(ctx, ev)
+	g.record(toolName, "allow", "", cmd)
+	return g.applyIntercept(ctx, toolName, input)
 }
 
 // applyIntercept evaluates user-configured intercept rules against the tool call.
 // Both rules and the fallback judge receive the complete tool input.
-func (g *Guard) applyIntercept(ctx context.Context, ev hook.Event) hook.Result {
+func (g *Guard) applyIntercept(ctx context.Context, toolName string, input []byte) (bool, string, []byte) {
 	if g.interceptor == nil {
-		return hook.Result{}
+		return false, "", nil
 	}
-	if !g.interceptor.IsToolEnabled(ev.ToolName) {
-		return hook.Result{}
+	if !g.interceptor.IsToolEnabled(toolName) {
+		return false, "", nil
 	}
-	ctx = intercept.WithCall(ctx, ev.ToolName, ev.Input)
-	dec, matched := g.interceptor.Match(ev.ToolName, ev.Input)
+	ctx = intercept.WithCall(ctx, toolName, input)
+	dec, matched := g.interceptor.Match(toolName, input)
 	if !matched {
 		// No rule matched. Ask the LLM fallback judge (if enabled); when it is off
 		// or unwired, keep current behavior and allow.
-		d, judged := g.interceptor.Judge(ctx, ev.ToolName, ev.Input)
+		d, judged := g.interceptor.Judge(ctx, toolName, input)
 		if !judged {
-			return hook.Result{}
+			return false, "", nil
 		}
 		dec = d
 	}
 	switch dec.Action {
 	case "deny":
 		// 观测:deny 命中不阻塞审批,直接记一条 denied（历史/任务拦截页可见）。
-		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, ev.ToolName, ev.Input, "denied")
-		return g.block(ev.ToolName, systemBlockMessage(dec.Message), "")
+		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, toolName, input, "denied")
+		return g.block(toolName, systemBlockMessage(dec.Message), "")
 	case "allow":
 		// Record explicit rule and model approvals so review details remain auditable.
-		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, ev.ToolName, ev.Input, "allowed")
-		return hook.Result{}
+		g.interceptor.Log(ctx, intercept.ConvIDFromContext(ctx), dec, toolName, input, "allowed")
+		return false, "", nil
 	case "ask":
 		// If the worker context is already cancelled (task stopped / killed), block
 		// immediately without creating a pending record — avoids orphaned DB entries
 		// and makes execOne complete fast, reducing the race against drainSynthetic.
 		if ctx.Err() != nil {
-			return g.block(ev.ToolName, systemBlockMessage("工作已取消，平台安全管控阻止执行"), "")
+			return g.block(toolName, systemBlockMessage("工作已取消，平台安全管控阻止执行"), "")
 		}
 		convID := intercept.ConvIDFromContext(ctx)
-		if !g.interceptor.HandleAsk(ctx, convID, dec, ev.ToolName, ev.Input) {
-			return g.block(ev.ToolName, systemBlockMessage("人工审批未通过（用户拒绝或审批超时）"), "")
+		if !g.interceptor.HandleAsk(ctx, convID, dec, toolName, input) {
+			return g.block(toolName, systemBlockMessage("人工审批未通过（用户拒绝或审批超时）"), "")
 		}
-		return hook.Result{}
+		return false, "", nil
 	}
-	return hook.Result{}
+	return false, "", nil
 }
 
 // systemBlockMessage frames an intercept block as an ARTEX platform-governance
 // decision so the agent does not mistake it for a target-side defense.
-//
-// The bare reasons ("禁止执行此工具" / "用户拒绝") read exactly like a WAF/403 on
-// the target, so a pentest agent's instinct is to bypass them — rewrite the
-// command, swap the payload, re-encode, retry. That is both futile (the platform
-// blocks the class of action, not one string) and wrong (it's a policy decision,
-// not an obstacle to defeat). This prefix states plainly that the block comes
-// from the platform, is not the target's protection, and that the operation is
-// forbidden — so the agent pivots to another approach instead of evading it.
-// Audit/history rows keep the raw reason (see Interceptor.Log); only the
-// model-facing tool_result carries this framing.
 func systemBlockMessage(reason string) string {
 	return "【ARTEX 平台管控·非目标防御】此调用被平台拦截。" +
 		"原因：" + reason + "。此操作被禁止。"
@@ -142,24 +132,23 @@ func systemBlockMessage(reason string) string {
 
 var reBlocked = regexp.MustCompile(`(?i)\b(403|forbidden|waf|blocked|rate.?limit|429|captcha|denied)\b`)
 
-// postToolUse is the Observer failure-attribution hook (G5): it classifies tool
+// PostToolUse is the Observer failure-attribution hook (G5): it classifies tool
 // results into blocked / error / ok so the planner can change strategy instead
 // of giving up at a WAF.
-func (g *Guard) postToolUse(_ context.Context, ev hook.Event) hook.Result {
-	if ev.ToolName != "Bash" {
-		return hook.Result{}
+func (g *Guard) PostToolUse(_ context.Context, toolName string, _, result []byte, isErr bool) {
+	if toolName != "Bash" {
+		return
 	}
 	class := "ok"
 	switch {
-	case reBlocked.Match(ev.Result):
+	case reBlocked.Match(result):
 		class = "blocked"
-	case ev.IsError:
+	case isErr:
 		class = "error"
 	}
 	g.mu.Lock()
 	g.attrib[class]++
 	g.mu.Unlock()
-	return hook.Result{}
 }
 
 // Attributions returns failure-attribution counts (Observer / G5).
@@ -173,9 +162,9 @@ func (g *Guard) Attributions() map[string]int {
 	return out
 }
 
-func (g *Guard) block(tool, reason, cmd string) hook.Result {
+func (g *Guard) block(tool, reason, cmd string) (bool, string, []byte) {
 	g.record(tool, "block", reason, cmd)
-	return hook.Result{Decision: "block", Message: reason}
+	return true, reason, nil
 }
 
 func (g *Guard) record(tool, action, reason, cmd string) {
@@ -194,4 +183,13 @@ func (g *Guard) Audit() []AuditEntry {
 	out := make([]AuditEntry, len(g.audit))
 	copy(out, g.audit)
 	return out
+}
+
+// Check evaluates tool call permission for Universal Runtime Middleware.
+func (g *Guard) Check(ctx context.Context, agentID, toolName string, args json.RawMessage) (proceed bool, reason string, err error) {
+	blocked, blockReason, _ := g.PreToolUse(ctx, toolName, []byte(args))
+	if blocked {
+		return false, blockReason, nil
+	}
+	return true, "", nil
 }

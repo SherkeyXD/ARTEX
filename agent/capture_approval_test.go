@@ -98,7 +98,7 @@ func TestCaptureApprovalLifecycle(t *testing.T) {
 					return tool.Text("probe succeeded"), nil
 				},
 			})
-			_, _, err := captureRun(ctx, agentcore.Options{Provider: provider, Tools: []tool.CoreTool{probe}, Hooks: g.Hooks(),
+			_, _, err := captureRun(ctx, agentcore.Options{Provider: provider, Tools: []tool.CoreTool{probe}, Hooks: AdaptGuardHooks(g.Hooks()),
 				PermissionMode: permission.ModeBypass, WorkingDir: t.TempDir(), MaxTurns: 2}, "record this review", nil)
 			if err != nil {
 				t.Fatal(err)

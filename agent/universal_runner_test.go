@@ -102,6 +102,7 @@ func TestWorkerUniversalRunner(t *testing.T) {
 		"Execute recon intent",
 		nil,
 		"You are a pentest worker.",
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("worker execute failed: %v", err)

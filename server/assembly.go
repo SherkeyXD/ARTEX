@@ -10,7 +10,7 @@ import (
 
 	"github.com/SherkeyXD/ARTEX/agent"
 	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/Autumn-27/norma/skill"
+	"github.com/SherkeyXD/ARTEX/runtime/skill"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
