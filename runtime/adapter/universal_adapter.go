@@ -8,43 +8,52 @@ import (
 	"strings"
 
 	"github.com/SherkeyXD/ARTEX/runtime"
+	"github.com/SherkeyXD/ARTEX/sidequestion"
 	"github.com/Autumn-27/norma/llm"
 	actool "github.com/Autumn-27/norma/tool"
 )
 
-// NormaToolAdapter wraps an existing actool.CoreTool into a runtime.Tool.
-type NormaToolAdapter struct {
+// UniversalToolAdapter wraps an existing tool into a universal runtime.Tool (UTool).
+type UniversalToolAdapter struct {
 	coreTool actool.CoreTool
 }
 
-// WrapNormaTool wraps a norma CoreTool into runtime.Tool.
-func WrapNormaTool(ct actool.CoreTool) runtime.Tool {
+// ToUniversalTool converts a CoreTool into a universal runtime.Tool.
+func ToUniversalTool(ct actool.CoreTool) runtime.Tool {
 	if ct == nil {
 		return nil
 	}
-	return &NormaToolAdapter{coreTool: ct}
+	return &UniversalToolAdapter{coreTool: ct}
 }
 
-// WrapNormaTools wraps a slice of norma CoreTools into runtime.Tools.
-func WrapNormaTools(cts []actool.CoreTool) []runtime.Tool {
+// ToUniversalTools converts a slice of CoreTools into universal runtime.Tools.
+func ToUniversalTools(cts []actool.CoreTool) []runtime.Tool {
 	res := make([]runtime.Tool, 0, len(cts))
 	for _, ct := range cts {
 		if ct != nil {
-			res = append(res, WrapNormaTool(ct))
+			res = append(res, ToUniversalTool(ct))
 		}
 	}
 	return res
 }
 
-func (a *NormaToolAdapter) Name() string {
+// Backward-compatible aliases for legacy callers
+var (
+	WrapNormaTool  = ToUniversalTool
+	WrapNormaTools = ToUniversalTools
+)
+
+type NormaToolAdapter = UniversalToolAdapter
+
+func (a *UniversalToolAdapter) Name() string {
 	return a.coreTool.Name()
 }
 
-func (a *NormaToolAdapter) Description() string {
+func (a *UniversalToolAdapter) Description() string {
 	return a.coreTool.Description()
 }
 
-func (a *NormaToolAdapter) ParametersSchema() json.RawMessage {
+func (a *UniversalToolAdapter) ParametersSchema() json.RawMessage {
 	schemaMap := a.coreTool.InputSchema()
 	if schemaMap == nil {
 		return json.RawMessage(`{"type":"object"}`)
@@ -56,7 +65,7 @@ func (a *NormaToolAdapter) ParametersSchema() json.RawMessage {
 	return b
 }
 
-func (a *NormaToolAdapter) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
+func (a *UniversalToolAdapter) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
 	res, err := a.coreTool.Call(ctx, rawArgs, nil)
 	if err != nil {
 		return nil, err
@@ -75,24 +84,28 @@ func (a *NormaToolAdapter) Execute(ctx context.Context, rawArgs json.RawMessage)
 	return sb.String(), nil
 }
 
-// NormaLLMAdapter adapts norma's llm.Provider (including llmpool.Pool) into runtime.LLMProvider.
-type NormaLLMAdapter struct {
+// UniversalLLMAdapter adapts an external llm.Provider (including llmpool.Pool) into runtime.LLMProvider.
+type UniversalLLMAdapter struct {
 	provider llm.Provider
 }
 
-// WrapNormaProvider creates a runtime.LLMProvider from a norma llm.Provider.
-func WrapNormaProvider(p llm.Provider) runtime.LLMProvider {
+// ToUniversalProvider creates a runtime.LLMProvider from an llm.Provider.
+func ToUniversalProvider(p llm.Provider) runtime.LLMProvider {
 	if p == nil {
 		return nil
 	}
-	return &NormaLLMAdapter{provider: p}
+	return &UniversalLLMAdapter{provider: p}
 }
 
-// Stream adapts norma's streaming events into runtime.LLMStreamEvent stream.
-func (a *NormaLLMAdapter) Stream(ctx context.Context, req runtime.CompletionRequest) iter.Seq2[runtime.LLMStreamEvent, error] {
-	// Convert canonical messages to norma messages
-	normaMsgs := make([]llm.Message, 0, len(req.Messages))
-	for _, m := range req.Messages {
+// Backward-compatible aliases for legacy callers
+var WrapNormaProvider = ToUniversalProvider
+
+type NormaLLMAdapter = UniversalLLMAdapter
+
+// ToProviderMessages converts canonical runtime messages into legacy provider messages.
+func ToProviderMessages(msgs []runtime.Message) []llm.Message {
+	normaMsgs := make([]llm.Message, 0, len(msgs))
+	for _, m := range msgs {
 		normaRole := llm.RoleUser
 		if m.Role == runtime.RoleAssistant {
 			normaRole = llm.RoleAssistant
@@ -129,6 +142,14 @@ func (a *NormaLLMAdapter) Stream(ctx context.Context, req runtime.CompletionRequ
 			Content: blocks,
 		})
 	}
+	return normaMsgs
+}
+
+// Stream adapts streaming events into runtime.LLMStreamEvent stream.
+func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.CompletionRequest) iter.Seq2[runtime.LLMStreamEvent, error] {
+	ctx = sidequestion.WithAttempt(ctx)
+	// Convert canonical messages to provider messages
+	normaMsgs := ToProviderMessages(req.Messages)
 
 	// Convert tools
 	normaTools := make([]llm.ToolSchema, 0, len(req.Tools))

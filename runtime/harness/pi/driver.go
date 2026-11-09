@@ -268,6 +268,15 @@ func (d *Driver) ExecuteTurn(
 					IsError:    true,
 					CharCount:  len(denialMsg),
 				}
+				if sink != nil {
+					sink.Emit(ctx, runtime.Event{
+						Type:       runtime.EventToolEnd,
+						Timestamp:  time.Now(),
+						SessionID:  session.ID,
+						TurnIndex:  tc.TurnIndex,
+						ToolResult: toolResult,
+					})
+				}
 			} else if !exists {
 				errMsg := fmt.Sprintf("未找到指定工具 %q", call.Name)
 				toolResult = &runtime.ToolResultData{
@@ -276,6 +285,15 @@ func (d *Driver) ExecuteTurn(
 					Content:    errMsg,
 					IsError:    true,
 					CharCount:  len(errMsg),
+				}
+				if sink != nil {
+					sink.Emit(ctx, runtime.Event{
+						Type:       runtime.EventToolEnd,
+						Timestamp:  time.Now(),
+						SessionID:  session.ID,
+						TurnIndex:  tc.TurnIndex,
+						ToolResult: toolResult,
+					})
 				}
 			} else {
 				// Tool execution approved!

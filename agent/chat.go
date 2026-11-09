@@ -147,6 +147,30 @@ func (c *ChatAgent) Chat(ctx context.Context, agentKey, sessionID, message strin
 		opts.Hooks = c.guard.Hooks()
 	}
 	ctx = attachSideCapture(ctx, &opts)
+
+	if ActiveHarness() == HarnessPi {
+		text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
+			AgentKey:        agentKey,
+			SessionID:       sessionID,
+			Model:           c.model,
+			Provider:        c.prov,
+			SystemPrompts:   system,
+			Input:           message,
+			Tools:           tools,
+			MaxTurns:        maxTurns,
+			MaxTokens:       c.maxTokens(),
+			ToolOutputLimit: 4000,
+			WorkingDir:      sessionWorkDir,
+			Emit: func(r db.Activity) {
+				if emit != nil {
+					r.Worker = agentKey
+					emit(r)
+				}
+			},
+		})
+		return text, err
+	}
+
 	s := agentcore.NewSession(opts)
 	defer s.Close()
 	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {

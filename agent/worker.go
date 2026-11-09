@@ -438,16 +438,17 @@ func (w *Worker) execute(ctx context.Context, name string, taskID int64, as *db.
 	// 意图、启动指令与意图锚定资产连同【全局态势 overview】随首轮 user 消息下发。
 	input := renderWorkerLaunchInput(intent, targetAssetsStr, overview)
 
+	ctx = attachSideCapture(ctx, &opts)
+
 	if ActiveHarness() == HarnessPi {
 		if message != "" {
 			input += "\n\n" + workerChatMarker(requestID) + "\n【人工对话输入的新意图】\n" + message +
 				"\n\n请优先执行这条人工输入。"
 		}
-		reason, err := w.runWorkerWithPi(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody)
+		reason, err := w.runWorkerWithUniversalRuntime(ctx, name, taskID, ts, intent, emitWrap, input, tools, sysBody)
 		return reason, tsx.Writes(), err
 	}
 
-	ctx = attachSideCapture(ctx, &opts)
 	s := agentcore.NewSession(opts)
 	defer s.Close() // release the session's background-task manager (temp dir + processes)
 

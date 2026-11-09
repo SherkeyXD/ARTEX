@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
@@ -145,6 +146,31 @@ func (m *MainAgent) Chat(ctx context.Context, taskID int64, mainSeg int, as *db.
 		MaxTokens:    m.maxTokens(),    // 0 = 不发上限,由服务端默认值决定
 	}
 	ctx = attachSideCapture(ctx, &opts)
+
+	if ActiveHarness() == HarnessPi {
+		text, _, err := RunUniversalAgent(ctx, UniversalAgentOptions{
+			AgentKey:        "mainagent",
+			SessionID:       fmt.Sprintf("mainagent-%d", taskID),
+			TaskID:          taskID,
+			Model:           m.model,
+			Provider:        m.prov,
+			SystemPrompts:   system,
+			Input:           message,
+			Tools:           tools,
+			MaxTurns:        m.maxTurns,
+			MaxTokens:       m.maxTokens(),
+			ToolOutputLimit: 4000,
+			WorkingDir:      mainDir,
+			Emit: func(r db.Activity) {
+				if emit != nil {
+					r.Worker = "mainagent"
+					emit(r)
+				}
+			},
+		})
+		return text, err
+	}
+
 	s := agentcore.NewSession(opts)
 	defer s.Close()
 	text, _, err := captureRunSession(ctx, s, message, func(r db.Activity) {

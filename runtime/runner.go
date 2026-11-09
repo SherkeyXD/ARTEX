@@ -11,7 +11,7 @@ type AgentConfig struct {
 	Name            string
 	SystemPrompt    string
 	Tools           []Tool
-	DriverID        string // e.g. "pi", "norma" (defaults to "pi")
+	DriverID        string // e.g. "pi" (defaults to "pi")
 	ModelName       string
 	ModelProfile    string
 	Temperature     float64

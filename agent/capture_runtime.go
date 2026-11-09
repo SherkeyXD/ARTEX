@@ -3,11 +3,14 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/SherkeyXD/ARTEX/db"
 	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/SherkeyXD/ARTEX/runtime"
+	"github.com/SherkeyXD/ARTEX/runtime/adapter"
+	"github.com/SherkeyXD/ARTEX/sidequestion"
 	"github.com/Autumn-27/norma/harness"
 )
 
@@ -15,8 +18,9 @@ import (
 // and emits db.Activity records identically to captureRunSession.
 func captureRuntimeTurn(
 	ctx context.Context,
-	runner *runtime.AgentRunner,
+	cfg runtime.AgentConfig,
 	session *runtime.Session,
+	chain *runtime.MiddlewareChain,
 	input string,
 	emit func(db.Activity),
 ) (string, harness.TerminalReason, error) {
@@ -38,27 +42,48 @@ func captureRuntimeTurn(
 		}
 	}
 
+	sink := runtime.EventSinkFunc(func(ctx context.Context, ev runtime.Event) {
+		switch ev.Type {
+		case runtime.EventToolCall:
+			if ev.ToolCall != nil {
+				in := string(ev.ToolCall.Arguments)
+				auditTrace.Start(ev.ToolCall.ID, ev.ToolCall.Name, ev.ToolCall.Arguments)
+				rec(db.Activity{
+					Kind:      "tool_use",
+					Tool:      ev.ToolCall.Name,
+					ToolUseID: ev.ToolCall.ID,
+					Summary:   ev.ToolCall.Name + " " + firstLine(in, 200),
+					Detail:    in,
+				})
+			}
+		case runtime.EventToolEnd:
+			if ev.ToolResult != nil {
+				auditTrace.Complete(ev.ToolResult.ToolCallID, ev.ToolResult.Content, ev.ToolResult.IsError)
+				meta, _ := json.Marshal(map[string]any{
+					"duration_ms": ev.ToolResult.DurationMs,
+					"char_count":  ev.ToolResult.CharCount,
+				})
+				rec(db.Activity{
+					Kind:      "tool_result",
+					Tool:      ev.ToolResult.ToolName,
+					ToolUseID: ev.ToolResult.ToolCallID,
+					Summary:   firstLine(ev.ToolResult.Content, 200),
+					Detail:    ev.ToolResult.Content,
+					IsError:   ev.ToolResult.IsError,
+					Metadata:  meta,
+				})
+			}
+		}
+	})
+
+	runner, err := runtime.NewAgentRunner(cfg, nil, chain, sink)
+	if err != nil {
+		return "", harness.ReasonModelError, fmt.Errorf("create universal agent runner: %w", err)
+	}
+
 	res, err := runner.RunTurn(ctx, session, input)
 	if err != nil {
 		return "", harness.ReasonModelError, err
-	}
-
-	// Emit tool executions
-	for _, tc := range res.ToolCalls {
-		summary := firstLine(tc.Content, 200)
-		meta, _ := json.Marshal(map[string]any{
-			"duration_ms": tc.DurationMs,
-			"char_count":  tc.CharCount,
-		})
-		rec(db.Activity{
-			Kind:      "tool_result",
-			Tool:      tc.ToolName,
-			ToolUseID: tc.ToolCallID,
-			Summary:   summary,
-			Detail:    tc.Content,
-			IsError:   tc.IsError,
-			Metadata:  meta,
-		})
 	}
 
 	// Emit final thinking if any
@@ -88,6 +113,9 @@ func captureRuntimeTurn(
 			Metadata: meta,
 		})
 	}
+
+	// Update side-question capture with final session messages
+	sidequestion.Finish(ctx, adapter.ToProviderMessages(session.Messages()))
 
 	var reason harness.TerminalReason
 	switch res.StopReason {
