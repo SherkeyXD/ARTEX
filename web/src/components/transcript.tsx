@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ApprovalDetail } from "@/components/approval-records";
 import type { Activity, InterceptPending } from "@/lib/types";
+import { prepareTranscriptActivities, transcriptDetail, type TranscriptActivity } from "@/lib/transcript-stream";
 
 // ---- per-agent lane color (planner + work#1/#2/#3 …) ---------------------------
 const workerColors = [
@@ -78,16 +79,16 @@ function useInView(rootMargin = "400px"): [React.RefObject<HTMLDivElement | null
 // agent is one "message".
 type Group =
   | { type: "user"; key: number; step: Activity; intent?: boolean }
-  | { type: "answer"; key: number; step: Activity }
+  | { type: "answer"; key: number; step: TranscriptActivity }
   | { type: "round"; key: number; label: string }
   | { type: "tool"; key: number; worker: string; use?: Activity; result?: Activity }
-  | { type: "msg"; key: number; worker: string; steps: Activity[] }
+  | { type: "msg"; key: number; worker: string; steps: TranscriptActivity[] }
   | { type: "intercept"; key: number; step: Activity };
 
 function groupSteps(steps: Activity[], chat: boolean): Group[] {
   const out: Group[] = [];
   const byToolId = new Map<string, Extract<Group, { type: "tool" }>>();
-  for (const s of steps) {
+  for (const s of prepareTranscriptActivities(steps)) {
     if (s.kind === "usage") continue; // live token-usage marker — not a rendered step
     if (s.kind === "round") {
       out.push({ type: "round", key: s.seq, label: s.summary || "新一轮" }); // planner round boundary
@@ -502,13 +503,13 @@ function MessageBlock({
   const Icon = isError ? Flag : MessageSquare;
   const tone = isError ? "text-red-600 dark:text-red-400" : "text-foreground";
 
-  const detailKey = group.steps.map((s) => s.seq).join(",");
+  const detailKey = group.steps.map((s) => `${s.seq}:${s.detail_seqs?.join(",") ?? ""}:${s.detail?.length ?? 0}`).join(";");
   React.useEffect(() => {
     if (!open || loadedKey.current === detailKey) return;
     let live = true;
     void Promise.all(
       group.steps.map((s) =>
-        getDetail(s.seq)
+        transcriptDetail(s, getDetail)
           .then((d) => d || s.summary)
           .catch(() => s.summary),
       ),
@@ -636,13 +637,14 @@ function UserRow({ step, intent, getDetail }: { step: Activity; intent?: boolean
 // AnswerBlock renders the agent's FINAL answer (kind="result") in full — never
 // collapsed. The summary is a truncated first line, so the full text is pulled
 // from the detail and shown inline.
-function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: number) => Promise<string> }) {
+function AnswerBlock({ step, getDetail }: { step: TranscriptActivity; getDetail: (seq: number) => Promise<string> }) {
   const [ref, inView] = useInView();
   const [full, setFull] = React.useState<string | null>(null);
+  const sourceKey = step.detail_seqs?.join(",") ?? String(step.seq);
   React.useEffect(() => {
-    if (!inView) return; // fetch the full answer only when it nears view
+    if (step.detail !== undefined || !inView) return;
     let live = true;
-    getDetail(step.seq)
+    transcriptDetail(step, getDetail)
       .then((d) => {
         if (live) setFull(d || step.summary);
       })
@@ -652,7 +654,7 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
     return () => {
       live = false;
     };
-  }, [inView, step.seq, getDetail, step.summary]);
+  }, [inView, step.seq, step.detail, sourceKey, getDetail, step.summary]);
   return (
     <div ref={ref} className="mb-2 mt-1 flex min-w-0 flex-col gap-1">
       <div
@@ -662,9 +664,9 @@ function AnswerBlock({ step, getDetail }: { step: Activity; getDetail: (seq: num
         }
       >
         {step.is_error ? (
-          <span className="whitespace-pre-wrap">{full ?? step.summary}</span>
+          <span className="whitespace-pre-wrap">{step.detail ?? full ?? step.summary}</span>
         ) : (
-          <Markdown text={full ?? step.summary} />
+          <Markdown text={step.detail ?? full ?? step.summary} />
         )}
       </div>
       <ActivityTime ts={step.ts} />

@@ -5,9 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 )
@@ -64,49 +61,12 @@ func OpenSession(ctx context.Context, dir, id, agentID, taskID string) (*Session
 		release()
 		return nil, nil, ctx.Err()
 	}
-	session := NewSession(id, agentID, taskID)
-	data, err := os.ReadFile(path)
-	if err == nil {
-		if err = json.Unmarshal(data, session); err != nil {
-			release()
-			return nil, nil, fmt.Errorf("load session: %w", err)
-		}
-		if session.ID != id || session.AgentID != agentID || session.TaskID != taskID {
-			release()
-			return nil, nil, fmt.Errorf("session identity mismatch")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	store := &sessionJournal{path: path}
+	session, err := store.load(id, agentID, taskID)
+	if err != nil {
 		release()
 		return nil, nil, err
 	}
-	session.SetCheckpoint(func(s *Session) error { return saveSession(path, s) })
+	session.SetCheckpoint(store.checkpoint)
 	return session, release, nil
-}
-
-func saveSession(path string, session *Session) error {
-	session.mu.RLock()
-	data, err := json.Marshal(session)
-	session.mu.RUnlock()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".session-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err = file.Write(data); err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return os.Rename(file.Name(), path)
 }

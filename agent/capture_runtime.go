@@ -46,9 +46,29 @@ func captureRuntimeTurn(
 		}
 	}
 
-	sink := runtime.EventSinkFunc(func(ctx context.Context, ev runtime.Event) {
+	stream := newActivityStream(rec)
+	type capturedEvent struct {
+		event    runtime.Event
+		recorded chan struct{}
+	}
+	events := make(chan capturedEvent, 32)
+	sink := runtime.EventSinkFunc(func(_ context.Context, ev runtime.Event) {
+		// Approval hooks run immediately after a tool-call event. Acknowledge
+		// capture before returning, preserving audit attribution during streaming.
+		captured := capturedEvent{event: ev, recorded: make(chan struct{})}
+		events <- captured
+		<-captured.recorded
+	})
+	handleEvent := func(ev runtime.Event) {
 		switch ev.Type {
+		case runtime.EventTextChunk:
+			stream.add("text", ev.Text)
+		case runtime.EventThinkingChunk:
+			stream.add("thinking", ev.Thinking)
+		case runtime.EventModelCallStart:
+			stream.boundary()
 		case runtime.EventToolCall:
+			stream.boundary()
 			if ev.ToolCall != nil {
 				in := string(ev.ToolCall.Arguments)
 				auditTrace.Start(ev.ToolCall.ID, ev.ToolCall.Name, ev.ToolCall.Arguments)
@@ -61,6 +81,7 @@ func captureRuntimeTurn(
 				})
 			}
 		case runtime.EventToolEnd:
+			stream.flush()
 			if ev.ToolResult != nil {
 				auditTrace.Complete(ev.ToolResult.ToolCallID, ev.ToolResult.Content, ev.ToolResult.IsError)
 				meta, _ := json.Marshal(map[string]any{
@@ -83,30 +104,46 @@ func captureRuntimeTurn(
 				rec(db.Activity{Kind: "usage", InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
 			}
 		}
-	})
+	}
 
 	runner, err := runtime.NewAgentRunner(cfg, nil, chain, sink)
 	if err != nil {
 		return "", runtime.ReasonModelError, fmt.Errorf("create universal agent runner: %w", err)
 	}
 
-	res, err := runner.RunTurn(ctx, session, input)
+	type completedTurn struct {
+		result *runtime.TurnResult
+		err    error
+	}
+	done := make(chan completedTurn, 1)
+	go func() { res, err := runner.RunTurn(ctx, session, input); done <- completedTurn{res, err} }()
+	ticker := time.NewTicker(activityFlushInterval)
+	defer ticker.Stop()
+	var res *runtime.TurnResult
+waiting:
+	for {
+		select {
+		case ev := <-events:
+			handleEvent(ev.event)
+			close(ev.recorded)
+		case <-ticker.C:
+			stream.flush()
+		case completed := <-done:
+			res, err = completed.result, completed.err
+			for {
+				select {
+				case ev := <-events:
+					handleEvent(ev.event)
+					close(ev.recorded)
+				default:
+					break waiting
+				}
+			}
+		}
+	}
+	stream.flush()
 	if res == nil {
 		res = &runtime.TurnResult{Reason: runtime.ReasonModelError, Error: err}
-	}
-
-	// Emit final thinking if any
-	if res.ThinkingText != "" {
-		meta, _ := json.Marshal(map[string]any{
-			"duration_ms": res.Duration.Milliseconds(),
-			"char_count":  len(res.ThinkingText),
-		})
-		rec(db.Activity{
-			Kind:     "thinking",
-			Summary:  firstLine(strings.TrimSpace(res.ThinkingText), 200),
-			Detail:   res.ThinkingText,
-			Metadata: meta,
-		})
 	}
 
 	reason := res.Reason
@@ -142,7 +179,7 @@ func captureRuntimeTurn(
 	// Activity totals are aggregated across runs by the DB. Persist this run's
 	// usage here; the resumed session keeps its separate cumulative counter.
 	u := res.TokenUsage
-	rec(db.Activity{Kind: "result", Summary: firstLine(detail, 400), Detail: detail, IsError: err != nil, Metadata: meta, InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
+	rec(db.Activity{Kind: "result", ToolUseID: stream.finalID(res.FinalText), Summary: firstLine(detail, 400), Detail: detail, IsError: err != nil, Metadata: meta, InputTokens: &u.InputTokens, OutputTokens: &u.OutputTokens, CacheReadTokens: &u.CacheReadTokens, CacheWriteTokens: &u.CacheWriteTokens})
 
 	return res.FinalText, reason, err
 }

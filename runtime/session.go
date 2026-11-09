@@ -17,6 +17,8 @@ func (s *Session) UpdateToolCall(call *ToolCallData) {
 				updated := *call
 				updated.Arguments = append(json.RawMessage(nil), call.Arguments...)
 				s.History[i].Parts[j].ToolCall = &updated
+				s.markHistoryDirty(i)
+				s.UpdatedAt = time.Now()
 				return
 			}
 		}
@@ -26,16 +28,19 @@ func (s *Session) UpdateToolCall(call *ToolCallData) {
 // Session represents an ongoing agent interaction context.
 // Inspired by Google ADK's Session state machine.
 type Session struct {
-	mu         sync.RWMutex
-	ID         string         `json:"id"`
-	AgentID    string         `json:"agent_id"`
-	TaskID     string         `json:"task_id,omitempty"`
-	History    []Message      `json:"history"`
-	Metadata   map[string]any `json:"metadata"`
-	TokenUsage TokenUsage     `json:"token_usage"`
-	CreatedAt  time.Time      `json:"created_at"`
-	UpdatedAt  time.Time      `json:"updated_at"`
-	checkpoint func(*Session) error
+	mu            sync.RWMutex
+	ID            string         `json:"id"`
+	AgentID       string         `json:"agent_id"`
+	TaskID        string         `json:"task_id,omitempty"`
+	History       []Message      `json:"history"`
+	Metadata      map[string]any `json:"metadata"`
+	TokenUsage    TokenUsage     `json:"token_usage"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	checkpoint    func(*Session) error
+	historyDirty  int
+	metadataDirty map[string]bool
+	usageDirty    bool
 }
 
 // SetCheckpoint attaches persistence to a session without coupling it to a store.
@@ -53,6 +58,7 @@ func (s *Session) ReplaceMessages(messages []Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.History = append([]Message(nil), messages...)
+	s.markHistoryDirty(0)
 	s.UpdatedAt = time.Now()
 }
 
@@ -60,13 +66,14 @@ func (s *Session) ReplaceMessages(messages []Message) {
 func NewSession(id, agentID, taskID string) *Session {
 	now := time.Now()
 	return &Session{
-		ID:        id,
-		AgentID:   agentID,
-		TaskID:    taskID,
-		History:   make([]Message, 0),
-		Metadata:  make(map[string]any),
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           id,
+		AgentID:      agentID,
+		TaskID:       taskID,
+		History:      make([]Message, 0),
+		Metadata:     make(map[string]any),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		historyDirty: -1,
 	}
 }
 
@@ -74,6 +81,10 @@ func NewSession(id, agentID, taskID string) *Session {
 func (s *Session) AppendMessage(msgs ...Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(msgs) == 0 {
+		return
+	}
+	s.markHistoryDirty(len(s.History))
 	s.History = append(s.History, msgs...)
 	s.UpdatedAt = time.Now()
 }
@@ -99,6 +110,9 @@ func (s *Session) RecordUsage(usage TokenUsage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.TokenUsage.Add(usage)
+	if usage != (TokenUsage{}) {
+		s.usageDirty = true
+	}
 	s.UpdatedAt = time.Now()
 }
 
@@ -117,6 +131,11 @@ func (s *Session) SetMetadata(key string, val any) {
 		s.Metadata = make(map[string]any)
 	}
 	s.Metadata[key] = val
+	s.UpdatedAt = time.Now()
+	if s.metadataDirty == nil {
+		s.metadataDirty = make(map[string]bool)
+	}
+	s.metadataDirty[key] = true
 	s.UpdatedAt = time.Now()
 }
 
@@ -137,10 +156,21 @@ func (s *Session) TruncateHead(keepCount int) {
 	defer s.mu.Unlock()
 	if keepCount <= 0 {
 		s.History = make([]Message, 0)
+		s.markHistoryDirty(0)
+		s.UpdatedAt = time.Now()
 		return
 	}
 	if len(s.History) > keepCount {
 		s.History = s.History[len(s.History)-keepCount:]
+		s.markHistoryDirty(0)
 		s.UpdatedAt = time.Now()
+	}
+}
+
+// Called with mu held. The earliest edit describes a replacement suffix, so
+// appends and approved argument changes never serialize the unchanged prefix.
+func (s *Session) markHistoryDirty(index int) {
+	if s.historyDirty < 0 || index < s.historyDirty {
+		s.historyDirty = index
 	}
 }
