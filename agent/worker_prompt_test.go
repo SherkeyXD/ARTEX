@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SherkeyXD/ARTEX/db"
 )
@@ -64,5 +65,29 @@ func TestRenderWorkerLaunchInputPackagesIntentAndOverview(t *testing.T) {
 	// User input must contain the overview.
 	if !strings.Contains(input, "全局探索态势") {
 		t.Fatalf("input missing overview: %s", input)
+	}
+
+	// The clock lives on the user turn, not the cached system prefix.
+	if !strings.Contains(input, "【当前时间】") {
+		t.Fatalf("input missing clock: %s", input)
+	}
+}
+
+func TestWorkerSystemPromptOmitsClock(t *testing.T) {
+	prev := PromptOverride
+	defer func() { PromptOverride = prev }()
+	PromptOverride = func(key string) (string, bool) {
+		if key == "worker" {
+			return "角色固定。当前时间：{{.Now}}", true
+		}
+		return "", false
+	}
+
+	sys := workerSystem("/data")
+	if strings.Contains(sys, time.Now().Format("2006")) {
+		t.Fatalf("worker system prompt contains a clock: %q", sys)
+	}
+	if !strings.Contains(sys, "当前时间：") {
+		t.Fatalf("custom worker body was dropped: %q", sys)
 	}
 }

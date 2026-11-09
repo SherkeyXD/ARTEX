@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/SherkeyXD/ARTEX/intercept"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/harness"
 	"github.com/Autumn-27/norma/llm"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/intercept"
 )
 
 // Worker is an LLM work agent (docs §4.4): it claims ONE intent, completes it
@@ -50,13 +50,13 @@ type WebSearchOpts struct {
 }
 
 type Worker struct {
-	prov            llm.Provider
-	model           string
-	workDir         string
-	webSearch       WebSearchOpts     // web_search tool backend selection (off by default)
-	window          int               // context window in tokens (for compaction)
-	windowFn        func() int        // optional dynamic task-chain minimum
-	maxTurns        int               // max agent turns per run (0 = unlimited)
+	prov      llm.Provider
+	model     string
+	workDir   string
+	webSearch WebSearchOpts // web_search tool backend selection (off by default)
+	window    int           // context window in tokens (for compaction)
+	windowFn  func() int    // optional dynamic task-chain minimum
+	maxTurns  int           // max agent turns per run (0 = unlimited)
 	// runTimeout is the wall-clock budget for the main exploration of one intent
 	// (0 = unlimited). When it fires, the run is cut and a settlement round is
 	// forced so already-identified facts get written back instead of being lost.
@@ -222,7 +222,9 @@ func ensureRunDir(base string, taskID, intentID int64) string {
 func cmdOutDir(dir string) string { return filepath.Join(dir, "cmd-output") }
 
 func workerSystem(dataDir string) string {
-	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{DataDir: dataDir, Now: nowDateStr()})
+	// Now stays blank. A clock in the system prompt, even at day granularity,
+	// changes the cached prefix. The launch user message carries the timestamp.
+	body := renderSystem("worker", workerDefaultTmpl, WorkerVars{DataDir: dataDir})
 	return body + workerArtifactSpec()
 }
 
@@ -258,7 +260,9 @@ func renderIntentTask(intent *db.Node) string {
 // system prompt keeps the system prompt byte-identical across all workers and intents.
 func renderWorkerLaunchInput(intent *db.Node, targetAssetsStr, overview string) string {
 	var sb strings.Builder
+	sb.WriteString("【当前时间】" + nowStr())
 	if intent != nil {
+		sb.WriteString("\n\n")
 		sb.WriteString(strings.TrimSpace(renderIntentTask(intent)))
 	}
 	if targetAssetsStr != "" {
