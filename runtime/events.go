@@ -9,34 +9,35 @@ import (
 type EventType string
 
 const (
-	EventTurnStart        EventType = "turn_start"
-	EventModelCallStart   EventType = "model_call_start"
-	EventFirstToken       EventType = "first_token"
-	EventThinkingChunk    EventType = "thinking_chunk"
-	EventTextChunk        EventType = "text_chunk"
-	EventToolCall         EventType = "tool_call"
-	EventToolStart        EventType = "tool_start"
-	EventToolEnd          EventType = "tool_end"
-	EventTurnEnd          EventType = "turn_end"
-	EventError            EventType = "error"
+	EventTurnStart      EventType = "turn_start"
+	EventModelCallStart EventType = "model_call_start"
+	EventFirstToken     EventType = "first_token"
+	EventThinkingChunk  EventType = "thinking_chunk"
+	EventTextChunk      EventType = "text_chunk"
+	EventToolCall       EventType = "tool_call"
+	EventToolStart      EventType = "tool_start"
+	EventToolEnd        EventType = "tool_end"
+	EventUsage          EventType = "usage"
+	EventTurnEnd        EventType = "turn_end"
+	EventError          EventType = "error"
 )
 
 // Event is the event structure emitted by the agent runtime and harness drivers.
 type Event struct {
-	Type        EventType      `json:"type"`
-	Timestamp   time.Time      `json:"timestamp"`
-	SessionID   string         `json:"session_id,omitempty"`
-	AgentID     string         `json:"agent_id,omitempty"`
-	TurnIndex   int            `json:"turn_index,omitempty"`
-	Text        string         `json:"text,omitempty"`
-	Thinking    string         `json:"thinking,omitempty"`
-	ToolCall    *ToolCallData  `json:"tool_call,omitempty"`
-	ToolResult  *ToolResultData`json:"tool_result,omitempty"`
-	TokenUsage  *TokenUsage    `json:"token_usage,omitempty"`
-	DurationMs  int64          `json:"duration_ms,omitempty"`
-	TTFTMs      int64          `json:"ttft_ms,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Type       EventType       `json:"type"`
+	Timestamp  time.Time       `json:"timestamp"`
+	SessionID  string          `json:"session_id,omitempty"`
+	AgentID    string          `json:"agent_id,omitempty"`
+	TurnIndex  int             `json:"turn_index,omitempty"`
+	Text       string          `json:"text,omitempty"`
+	Thinking   string          `json:"thinking,omitempty"`
+	ToolCall   *ToolCallData   `json:"tool_call,omitempty"`
+	ToolResult *ToolResultData `json:"tool_result,omitempty"`
+	TokenUsage *TokenUsage     `json:"token_usage,omitempty"`
+	DurationMs int64           `json:"duration_ms,omitempty"`
+	TTFTMs     int64           `json:"ttft_ms,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	Metadata   map[string]any  `json:"metadata,omitempty"`
 }
 
 // EventSink consumes events from runtime execution.

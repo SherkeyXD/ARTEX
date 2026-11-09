@@ -432,6 +432,17 @@ func TestConnection(ctx context.Context, c Config) (time.Duration, string, error
 		MaxTokens: 8192,
 	}
 	acc := llm.NewAccumulator()
+	if !c.Stream {
+		message, _, _, err := prov.Complete(ctx, req)
+		if err != nil {
+			return time.Since(start), "", err
+		}
+		reply := strings.TrimSpace(message.Text())
+		if reply == "" {
+			return time.Since(start), "", fmt.Errorf("模型无回复内容（请求已通，但未返回任何文本）")
+		}
+		return time.Since(start), reply, nil
+	}
 	for ev, err := range prov.Stream(ctx, req) {
 		if err != nil {
 			return time.Since(start), "", err

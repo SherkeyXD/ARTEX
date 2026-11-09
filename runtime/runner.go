@@ -10,6 +10,14 @@ import (
 type AgentConfig struct {
 	Name            string
 	SystemPrompt    string
+	SystemPrompts   []string
+	DynamicBoundary int
+	NonStreaming    bool
+	WorkingDir      string
+	ToolOutputDir   string
+	MaxDuration     time.Duration
+	Settlement      *Settlement
+	Compaction      *CompactionConfig
 	Tools           []Tool
 	DriverID        string // e.g. "pi" (defaults to "pi")
 	ModelName       string
@@ -75,6 +83,9 @@ func (r *AgentRunner) RunTurn(ctx context.Context, session *Session, userPrompt 
 	if userPrompt != "" {
 		session.AppendMessage(NewUserMessage(userPrompt))
 	}
+	if err := session.Checkpoint(); err != nil {
+		return &TurnResult{Reason: ReasonModelError, Error: err}, err
+	}
 
 	// 2. Lifecycle: OnBeforeTurn
 	if err := r.middlewares.OnBeforeTurn(ctx, tc); err != nil {
@@ -98,6 +109,14 @@ func (r *AgentRunner) RunTurn(ctx context.Context, session *Session, userPrompt 
 		ModelProfile:    r.config.ModelProfile,
 		ModelName:       r.config.ModelName,
 		SystemPrompt:    r.config.SystemPrompt,
+		SystemPrompts:   r.config.SystemPrompts,
+		DynamicBoundary: r.config.DynamicBoundary,
+		NonStreaming:    r.config.NonStreaming,
+		WorkingDir:      r.config.WorkingDir,
+		ToolOutputDir:   r.config.ToolOutputDir,
+		MaxDuration:     r.config.MaxDuration,
+		Settlement:      r.config.Settlement,
+		Compaction:      r.config.Compaction,
 		Temperature:     r.config.Temperature,
 		MaxTokens:       r.config.MaxTokens,
 		MaxIterations:   r.config.MaxIterations,
@@ -121,11 +140,19 @@ func (r *AgentRunner) RunTurn(ctx context.Context, session *Session, userPrompt 
 				Error:     err.Error(),
 			})
 		}
+	}
+	if turnResult == nil {
 		return nil, err
 	}
 
 	// 6. Accumulate tokens to session
 	session.RecordUsage(turnResult.TokenUsage)
+	if saveErr := session.Checkpoint(); saveErr != nil {
+		if err == nil {
+			err = saveErr
+		}
+		turnResult.Error = err
+	}
 
 	// 7. Lifecycle: OnAfterTurn
 	r.middlewares.OnAfterTurn(ctx, tc, turnResult)
@@ -145,5 +172,5 @@ func (r *AgentRunner) RunTurn(ctx context.Context, session *Session, userPrompt 
 		})
 	}
 
-	return turnResult, nil
+	return turnResult, err
 }

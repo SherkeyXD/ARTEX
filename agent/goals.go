@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
 	acperm "github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 	"github.com/Autumn-27/norma/transcript"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // goalsDefaultTmpl is the built-in EDITABLE body (段 [A]) of the goals-decomposer
@@ -163,6 +163,8 @@ func DecomposeGoalsWithProvider(ctx context.Context, prov llm.Provider, dataDir,
 			Tools:           tools,
 			MaxTurns:        8,
 			MaxTokens:       maxTokens,
+			NonStreaming:    nonStreaming,
+			Ephemeral:       true,
 			ToolOutputLimit: 4000,
 			WorkingDir:      ensureRunDir(dataDir, taskID, 0),
 			Emit:            captureEmit,

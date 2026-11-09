@@ -1,22 +1,59 @@
 package runtime
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 )
 
+// UpdateToolCall records the arguments actually approved by a hook. Replace the
+// call value so a prior request snapshot is not rewritten through a shared pointer.
+func (s *Session) UpdateToolCall(call *ToolCallData) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.History) - 1; i >= 0; i-- {
+		for j, part := range s.History[i].Parts {
+			if part.ToolCall != nil && part.ToolCall.ID == call.ID {
+				updated := *call
+				updated.Arguments = append(json.RawMessage(nil), call.Arguments...)
+				s.History[i].Parts[j].ToolCall = &updated
+				return
+			}
+		}
+	}
+}
+
 // Session represents an ongoing agent interaction context.
 // Inspired by Google ADK's Session state machine.
 type Session struct {
-	mu           sync.RWMutex
-	ID           string         `json:"id"`
-	AgentID      string         `json:"agent_id"`
-	TaskID       string         `json:"task_id,omitempty"`
-	History      []Message      `json:"history"`
-	Metadata     map[string]any `json:"metadata"`
-	TokenUsage   TokenUsage     `json:"token_usage"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	mu         sync.RWMutex
+	ID         string         `json:"id"`
+	AgentID    string         `json:"agent_id"`
+	TaskID     string         `json:"task_id,omitempty"`
+	History    []Message      `json:"history"`
+	Metadata   map[string]any `json:"metadata"`
+	TokenUsage TokenUsage     `json:"token_usage"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	checkpoint func(*Session) error
+}
+
+// SetCheckpoint attaches persistence to a session without coupling it to a store.
+// A session is executed by one runner at a time; the store serializes cold resumes.
+func (s *Session) SetCheckpoint(save func(*Session) error) { s.checkpoint = save }
+
+func (s *Session) Checkpoint() error {
+	if s.checkpoint != nil {
+		return s.checkpoint(s)
+	}
+	return nil
+}
+
+func (s *Session) ReplaceMessages(messages []Message) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.History = append([]Message(nil), messages...)
+	s.UpdatedAt = time.Now()
 }
 
 // NewSession creates an empty initialized session.

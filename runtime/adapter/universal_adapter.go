@@ -7,10 +7,10 @@ import (
 	"iter"
 	"strings"
 
+	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/SherkeyXD/ARTEX/runtime"
 	"github.com/SherkeyXD/ARTEX/sidequestion"
-	"github.com/SherkeyXD/ARTEX/llm"
-	actool "github.com/Autumn-27/norma/tool"
 )
 
 // UniversalToolAdapter wraps an existing tool into a universal runtime.Tool.
@@ -66,7 +66,13 @@ func (a *UniversalToolAdapter) ParametersSchema() json.RawMessage {
 }
 
 func (a *UniversalToolAdapter) Execute(ctx context.Context, rawArgs json.RawMessage) (any, error) {
-	res, err := a.coreTool.Call(ctx, rawArgs, nil)
+	execution := runtime.ToolExecutionFrom(ctx)
+	toolContext := &actool.ToolContext{
+		WorkingDir: execution.WorkingDir, AgentID: execution.AgentID,
+		ToolUseID: execution.ToolUseID, OutputDir: execution.OutputDir,
+		MaxOutputChars: execution.MaxOutputChars,
+	}
+	res, err := a.coreTool.Call(ctx, rawArgs, toolContext)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +87,26 @@ func (a *UniversalToolAdapter) Execute(ctx context.Context, rawArgs json.RawMess
 	if res.IsError {
 		return nil, fmt.Errorf("%s", sb.String())
 	}
-	return sb.String(), nil
+	content := actool.CaptureOnce(toolContext, runtime.SanitizeToolOutput(sb.String()))
+	captured := strings.Contains(content, "<persisted-output>") || strings.Contains(content, "characters truncated]")
+	if len(res.Extra) > 0 || captured {
+		var messages []runtime.Message
+		for _, message := range res.Extra {
+			parts := make([]runtime.Part, 0, len(message.Content))
+			for _, block := range message.Content {
+				if string(block.Type) == string(llm.BlockText) {
+					parts = append(parts, runtime.TextPart(block.Text))
+				}
+			}
+			role := runtime.RoleUser
+			if string(message.Role) == string(llm.RoleAssistant) {
+				role = runtime.RoleAssistant
+			}
+			messages = append(messages, runtime.Message{Role: role, Parts: parts})
+		}
+		return runtime.ToolOutput{Content: content, Messages: messages, Captured: captured}, nil
+	}
+	return content, nil
 }
 
 // UniversalLLMAdapter adapts an external llm.Provider (including llmpool.Pool) into runtime.LLMProvider.
@@ -118,8 +143,9 @@ func ToProviderMessages(msgs []runtime.Message) []llm.Message {
 				blocks = append(blocks, llm.TextBlock(p.Text))
 			case runtime.PartThinking:
 				blocks = append(blocks, llm.ContentBlock{
-					Type:     llm.BlockThinking,
-					Thinking: p.Thinking,
+					Type:      llm.BlockThinking,
+					Thinking:  p.Thinking,
+					Signature: p.Signature,
 				})
 			case runtime.PartToolCall:
 				if p.ToolCall != nil {
@@ -169,7 +195,9 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 	}
 
 	var sysList []string
-	if req.SystemPrompt != "" {
+	if len(req.SystemPrompts) > 0 {
+		sysList = req.SystemPrompts
+	} else if req.SystemPrompt != "" {
 		sysList = []string{req.SystemPrompt}
 	}
 
@@ -180,12 +208,13 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 	}
 
 	normaReq := llm.CompletionRequest{
-		System:      sysList,
-		Messages:    normaMsgs,
-		Tools:       normaTools,
-		Temperature: temp,
-		MaxTokens:   req.MaxTokens,
-		Thinking:    req.ThinkingType,
+		System:          sysList,
+		DynamicBoundary: req.DynamicBoundary,
+		Messages:        normaMsgs,
+		Tools:           normaTools,
+		Temperature:     temp,
+		MaxTokens:       req.MaxTokens,
+		Thinking:        req.ThinkingType,
 	}
 
 	return func(yield func(runtime.LLMStreamEvent, error) bool) {
@@ -193,13 +222,17 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 		var currentToolName string
 		var currentToolArgs strings.Builder
 
-		for ev, err := range a.provider.Stream(ctx, normaReq) {
+		for ev, err := range a.events(ctx, normaReq, req.NonStreaming) {
 			if err != nil {
 				yield(runtime.LLMStreamEvent{}, err)
 				return
 			}
 
 			switch ev.Type {
+			case llm.SEThinkingSignature:
+				if !yield(runtime.LLMStreamEvent{Type: runtime.LLMEventThinkingSignature, Signature: ev.Text}, nil) {
+					return
+				}
 			case llm.SEThinkingDelta:
 				if !yield(runtime.LLMStreamEvent{
 					Type:     runtime.LLMEventThinking,
@@ -221,7 +254,7 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 					tcData := &runtime.ToolCallData{
 						ID:        currentToolID,
 						Name:      currentToolName,
-						Arguments: json.RawMessage(currentToolArgs.String()),
+						Arguments: toolInput(currentToolArgs.String()),
 					}
 					if !yield(runtime.LLMStreamEvent{
 						Type:     runtime.LLMEventToolCall,
@@ -237,12 +270,12 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 			case llm.SEToolInputJSON:
 				currentToolArgs.WriteString(ev.Text)
 
-			case llm.SEMessageDelta:
+			case llm.SEMessageStart, llm.SEMessageDelta:
 				if currentToolID != "" {
 					tcData := &runtime.ToolCallData{
 						ID:        currentToolID,
 						Name:      currentToolName,
-						Arguments: json.RawMessage(currentToolArgs.String()),
+						Arguments: toolInput(currentToolArgs.String()),
 					}
 					currentToolID = ""
 					if !yield(runtime.LLMStreamEvent{
@@ -267,13 +300,18 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 						return
 					}
 				}
+				if ev.StopReason != "" {
+					if !yield(runtime.LLMStreamEvent{Type: runtime.LLMEventFinish, FinishReason: ev.StopReason}, nil) {
+						return
+					}
+				}
 
 			case llm.SEMessageStop:
 				if currentToolID != "" {
 					tcData := &runtime.ToolCallData{
 						ID:        currentToolID,
 						Name:      currentToolName,
-						Arguments: json.RawMessage(currentToolArgs.String()),
+						Arguments: toolInput(currentToolArgs.String()),
 					}
 					currentToolID = ""
 					if !yield(runtime.LLMStreamEvent{
@@ -286,4 +324,56 @@ func (a *UniversalLLMAdapter) Stream(ctx context.Context, req runtime.Completion
 			}
 		}
 	}
+}
+
+// events uses the provider's real non-streaming request when selected, then
+// normalizes the completed message through the same event adapter.
+func (a *UniversalLLMAdapter) events(ctx context.Context, req llm.CompletionRequest, nonStreaming bool) iter.Seq2[llm.StreamEvent, error] {
+	if !nonStreaming {
+		return a.provider.Stream(ctx, req)
+	}
+	return func(yield func(llm.StreamEvent, error) bool) {
+		message, stop, usage, err := a.provider.Complete(ctx, req)
+		if err != nil {
+			yield(llm.StreamEvent{}, err)
+			return
+		}
+		for _, block := range message.Content {
+			switch block.Type {
+			case llm.BlockText:
+				if !yield(llm.StreamEvent{Type: llm.SETextDelta, Text: block.Text}, nil) {
+					return
+				}
+			case llm.BlockThinking:
+				if !yield(llm.StreamEvent{Type: llm.SEThinkingDelta, Text: block.Thinking}, nil) {
+					return
+				}
+				if !yield(llm.StreamEvent{Type: llm.SEThinkingSignature, Text: block.Signature}, nil) {
+					return
+				}
+			case llm.BlockToolUse:
+				if !yield(llm.StreamEvent{Type: llm.SEToolUseStart, ToolID: block.ID, ToolName: block.Name}, nil) {
+					return
+				}
+				input := string(block.Input)
+				if input == "" {
+					input = "{}"
+				}
+				if !yield(llm.StreamEvent{Type: llm.SEToolInputJSON, Text: input}, nil) {
+					return
+				}
+			}
+		}
+		if !yield(llm.StreamEvent{Type: llm.SEMessageDelta, StopReason: stop, Usage: usage}, nil) {
+			return
+		}
+		yield(llm.StreamEvent{Type: llm.SEMessageStop}, nil)
+	}
+}
+
+func toolInput(input string) json.RawMessage {
+	if strings.TrimSpace(input) == "" {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(input)
 }

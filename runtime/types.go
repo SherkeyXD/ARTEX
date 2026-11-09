@@ -47,6 +47,7 @@ type Part struct {
 	Type       PartType        `json:"type"`
 	Text       string          `json:"text,omitempty"`
 	Thinking   string          `json:"thinking,omitempty"`
+	Signature  string          `json:"signature,omitempty"`
 	ToolCall   *ToolCallData   `json:"tool_call,omitempty"`
 	ToolResult *ToolResultData `json:"tool_result,omitempty"`
 }
@@ -209,12 +210,12 @@ const (
 type StopReason string
 
 const (
-	StopReasonComplete   StopReason = "complete"
-	StopReasonMaxSteps   StopReason = "max_steps"
-	StopReasonCancelled  StopReason = "cancelled"
-	StopReasonToolError  StopReason = "tool_error"
+	StopReasonComplete    StopReason = "complete"
+	StopReasonMaxSteps    StopReason = "max_steps"
+	StopReasonCancelled   StopReason = "cancelled"
+	StopReasonToolError   StopReason = "tool_error"
 	StopReasonInterrupted StopReason = "interrupted"
-	StopReasonError      StopReason = "error"
+	StopReasonError       StopReason = "error"
 )
 
 // TurnResult represents the output of a single Agent turn execution.
@@ -227,5 +228,7 @@ type TurnResult struct {
 	Duration     time.Duration     `json:"duration"`
 	TTFT         time.Duration     `json:"ttft"`
 	StopReason   StopReason        `json:"stop_reason"`
+	Reason       TerminalReason    `json:"reason,omitempty"`
+	Iterations   int               `json:"iterations"`
 	Error        error             `json:"error,omitempty"`
 }

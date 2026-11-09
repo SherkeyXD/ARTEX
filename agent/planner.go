@@ -7,12 +7,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/SherkeyXD/ARTEX/db"
-	"github.com/SherkeyXD/ARTEX/intercept"
-	"github.com/SherkeyXD/ARTEX/llm"
 	"github.com/Autumn-27/norma/agentcore"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
+	"github.com/SherkeyXD/ARTEX/db"
+	"github.com/SherkeyXD/ARTEX/intercept"
+	"github.com/SherkeyXD/ARTEX/llm"
 )
 
 // Planner is the event-driven LLM planner (docs §4.3): each time the asset or
@@ -557,6 +557,11 @@ func (p *Planner) Plan(ctx context.Context, taskID int64, as *db.AssetStore, ts 
 			Model:           p.model,
 			Provider:        p.prov,
 			SystemPrompts:   system,
+			DynamicBoundary: boundary,
+			NonStreaming:    p.nonStreaming(),
+			MaxDuration:     maxDur,
+			Settlement:      nativeSettlement(opts.Settlement),
+			Compaction:      nativeCompaction(opts.Compaction),
 			Input:           input,
 			Tools:           tools,
 			MaxTurns:        p.maxTurns,
